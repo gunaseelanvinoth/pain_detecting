@@ -24,6 +24,7 @@ class PainLiveLogger:
                 [
                     "timestamp",
                     "frame_idx",
+                    "elapsed_seconds",
                     "patient_id",
                     "pain_score_0_10",
                     "pain_level",
@@ -58,21 +59,22 @@ class PainLiveLogger:
 
     def log(
         self,
+        timestamp_iso: str,
         frame_idx: int,
+        elapsed_seconds: float,
         patient_id: int,
         score_0_10: float,
         level: str,
         features: FramePainFeatures,
         duration: DurationStatus,
     ) -> None:
-        now_iso = datetime.now().isoformat(timespec="seconds")
-
         with self.output_file.open("a", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow(
                 [
-                    now_iso,
+                    timestamp_iso,
                     frame_idx,
+                    f"{elapsed_seconds:.3f}",
                     patient_id,
                     f"{score_0_10:.3f}",
                     level,
@@ -90,9 +92,9 @@ class PainLiveLogger:
             )
 
         if duration.started_now:
-            self._log_episode_event(now_iso, "START", duration.active_episode_id, None)
+            self._log_episode_event(timestamp_iso, "START", duration.active_episode_id, None)
         if duration.ended_now and duration.finished_episode is not None:
-            self._log_episode_event(now_iso, "END", duration.finished_episode.episode_id, duration.finished_episode)
+            self._log_episode_event(timestamp_iso, "END", duration.finished_episode.episode_id, duration.finished_episode)
 
     def _log_episode_event(self, timestamp: str, event: str, episode_id: int | None, summary) -> None:
         with self.episode_file.open("a", newline="", encoding="utf-8") as file:

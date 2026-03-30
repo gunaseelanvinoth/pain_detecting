@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -59,6 +60,12 @@ def run_live_monitor(
 
     runtime = RuntimeState()
     logger = PainLiveLogger(Path.cwd() / "sample_data") if cfg.save_live_data else None
+
+    source_text = str(video_path) if video_path is not None else f"camera_index={cfg.camera_index}"
+    print(f"[INFO] Starting live pain monitor on source: {source_text}")
+    print("[INFO] Preview window opened. Press 'q' to stop.")
+    if cfg.calibration_seconds > 0:
+        print(f"[INFO] Calibration running for ~{cfg.calibration_seconds:.1f}s. Keep a neutral face.")
 
     frame_idx = 0
     processed = 0
@@ -130,8 +137,11 @@ def run_live_monitor(
             draw_overlay(frame, features, score, level, duration, calibration_text=calibration_text)
 
             if logger is not None and frame_idx % cfg.log_every_n_frames == 0:
+                timestamp_iso = datetime.now().astimezone().isoformat(timespec="seconds")
                 logger.log(
+                    timestamp_iso=timestamp_iso,
                     frame_idx=frame_idx,
+                    elapsed_seconds=(now - start_wall),
                     patient_id=cfg.patient_id,
                     score_0_10=score,
                     level=level,
@@ -184,6 +194,7 @@ def extract_features_from_video(
     config: PainMonitoringConfig | None = None,
     sample_every_n_frames: int = 3,
     fixed_label: float | None = None,
+    show_preview: bool = True,
 ) -> dict:
     import cv2
 
@@ -197,6 +208,10 @@ def extract_features_from_video(
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video file: {video_path}")
+
+    print(f"[INFO] Extracting from video: {video_path}")
+    if show_preview:
+        print("[INFO] Preview window opened. Press 'q' to stop early.")
 
     face_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     eye_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
@@ -240,9 +255,48 @@ def extract_features_from_video(
                     row[TARGET_COLUMN] = float(fixed_label)
                 rows.append(row)
 
+            if show_preview:
+                preview = frame.copy()
+                if features.face_detected and features.face_box is not None:
+                    x, y, w, h = features.face_box
+                    cv2.rectangle(preview, (x, y), (x + w, y + h), (0, 200, 0), 2)
+                    cv2.putText(
+                        preview,
+                        "Face detected",
+                        (x, max(20, y - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (0, 200, 0),
+                        2,
+                    )
+                else:
+                    cv2.putText(
+                        preview,
+                        "Face not detected",
+                        (20, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 80, 255),
+                        2,
+                    )
+                cv2.putText(
+                    preview,
+                    f"Frame: {frame_idx} | Rows: {len(rows)}",
+                    (20, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    2,
+                )
+                cv2.imshow("Feature Extraction Preview", preview)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
             frame_idx += 1
     finally:
         capture.release()
+        if show_preview:
+            cv2.destroyWindow("Feature Extraction Preview")
 
     output_csv_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(output_csv_path, index=False)

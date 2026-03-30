@@ -68,9 +68,17 @@ cd "C:\Users\HP\OneDrive\Documents\New project\pain-monitoring-project"
 python -m pip install -r requirements.txt
 python pain_main.py train --csv sample_data\pain_labels\pain_labeled_template.csv --model-out artifacts\pain_model.json --metrics-out artifacts\pain_training_metrics.json
 python pain_main.py evaluate --model artifacts\pain_model.json --csv sample_data\pain_labels\pain_labeled_template.csv
+python pain_main.py --config configs/default_config.json extract-features --video sample_data\sample_face_video.mp4 --out-csv sample_data\generated_features_labeled.csv --sample-every 3 --fixed-label 6.0
+python pain_main.py summarize-session --csv sample_data\pain_session_demo.csv --out artifacts\session_summary.csv
 python pain_main.py --config configs/default_config.json live --model artifacts\pain_model.json
 streamlit run streamlit_pain_app.py
 ```
+
+## Default Sample Files Included
+
+- Sample video: `sample_data/sample_face_video.mp4`
+- Sample extracted features output path: `sample_data/generated_features_labeled.csv`
+- Sample session file for summarize/dashboard: `sample_data/pain_session_demo.csv`
 
 ## Commands
 
@@ -81,6 +89,7 @@ python pain_main.py --config configs/default_config.json live
 ```
 
 Important for accuracy: during the first `6` seconds, keep a neutral face so the system calibrates your personal baseline.
+Terminal prompt now explicitly shows source, calibration status, and `Press 'q' to stop`.
 
 ### 2. Live monitoring with trained model
 
@@ -91,13 +100,21 @@ python pain_main.py --config configs/default_config.json live --model artifacts/
 ### 3. Extract features from a video (for dataset building)
 
 ```powershell
-python pain_main.py --config configs/default_config.json extract-features --video input.mp4 --out-csv sample_data/generated_features.csv --sample-every 3
+python pain_main.py --config configs/default_config.json extract-features --video sample_data/sample_face_video.mp4 --out-csv sample_data/generated_features.csv --sample-every 3
 ```
+
+By default this opens a preview window and draws face detection boxes.
 
 Attach a fixed label if this video segment has one known pain level:
 
 ```powershell
-python pain_main.py --config configs/default_config.json extract-features --video input.mp4 --out-csv sample_data/generated_features_labeled.csv --sample-every 3 --fixed-label 6.0
+python pain_main.py --config configs/default_config.json extract-features --video sample_data/sample_face_video.mp4 --out-csv sample_data/generated_features_labeled.csv --sample-every 3 --fixed-label 6.0
+```
+
+Disable preview window (optional):
+
+```powershell
+python pain_main.py --config configs/default_config.json extract-features --video sample_data/sample_face_video.mp4 --out-csv sample_data/generated_features_labeled.csv --sample-every 3 --fixed-label 6.0 --no-preview
 ```
 
 ### 4. Train model
@@ -115,7 +132,7 @@ python pain_main.py evaluate --model artifacts/pain_model.json --csv sample_data
 ### 6. Summarize one live session
 
 ```powershell
-python pain_main.py summarize-session --csv sample_data/pain_session_YYYYMMDD_HHMMSS.csv --out artifacts/session_summary.csv
+python pain_main.py summarize-session --csv sample_data/pain_session_demo.csv --out artifacts/session_summary.csv
 ```
 
 ### 7. Dashboard
@@ -133,6 +150,7 @@ python -m unittest discover -s tests -p "test_*.py"
 ## Notes
 
 - This is a project-grade engineering package for demos/academics.
+- Log timestamps are now timezone-aware local ISO format (with offset) and include `elapsed_seconds` for stable ordering.
 - It is still not a certified medical device.
 - For real clinical deployment, you need hospital-approved datasets, calibration studies, bias audits, and regulatory clearance.
 

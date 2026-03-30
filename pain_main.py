@@ -36,6 +36,7 @@ if __name__ == "__main__":
     extract_parser.add_argument("--out-csv", required=True, help="Output feature CSV path")
     extract_parser.add_argument("--sample-every", type=int, default=3, help="Sample every N frames")
     extract_parser.add_argument("--fixed-label", type=float, default=None, help="Optional fixed pain label for all rows")
+    extract_parser.add_argument("--no-preview", action="store_true", help="Disable extraction preview window")
 
     train_parser = subparsers.add_parser("train", help="Train from labeled CSV")
     train_parser.add_argument("--csv", required=True, help="Labeled training CSV path")
@@ -67,6 +68,7 @@ if __name__ == "__main__":
             config=config,
             sample_every_n_frames=args.sample_every,
             fixed_label=args.fixed_label,
+            show_preview=not args.no_preview,
         )
         print(json.dumps(payload, indent=2))
     elif args.command == "train":

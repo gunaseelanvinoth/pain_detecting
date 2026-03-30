@@ -1,0 +1,7 @@
+﻿.venv/
+__pycache__/
+*.pyc
+artifacts/*.json
+sample_data/pain_session_*.csv
+sample_data/pain_episode_events_*.csv
+sample_data/generated_features_*.csv

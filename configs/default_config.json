@@ -1,0 +1,18 @@
+﻿{
+  "camera_index": 0,
+  "frame_width": 960,
+  "frame_height": 540,
+  "min_face_area": 6000,
+  "pain_start_threshold": 4.5,
+  "pain_end_threshold": 3.0,
+  "start_hold_seconds": 1.4,
+  "end_hold_seconds": 1.8,
+  "smoothing_alpha": 0.45,
+  "prediction_smoothing_alpha": 0.35,
+  "calibration_seconds": 6.0,
+  "calibration_min_samples": 25,
+  "neutral_anchor_score": 1.0,
+  "save_live_data": true,
+  "log_every_n_frames": 4,
+  "patient_id": 1
+}

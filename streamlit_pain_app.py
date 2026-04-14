@@ -28,6 +28,8 @@ def load_session(path: str) -> pd.DataFrame:
         "mouth_tension",
         "smile_absence",
         "motion_score",
+        "wheeze_probability",
+        "respiratory_motion",
         "pain_active",
     ]
     for column in numeric_columns:
@@ -60,16 +62,17 @@ def summarize_episodes(data: pd.DataFrame) -> pd.DataFrame:
         end=("timestamp", "max"),
         max_score=("pain_score_0_10", "max"),
         avg_score=("pain_score_0_10", "mean"),
+        peak_wheeze=("wheeze_probability", "max") if "wheeze_probability" in episodes.columns else ("pain_score_0_10", "size"),
     )
     grouped = grouped.rename(columns={"active_episode_id": "episode_id"})
     grouped["duration_s"] = (grouped["end"] - grouped["start"]).dt.total_seconds().fillna(0.0)
-    return grouped[["episode_id", "start", "end", "duration_s", "max_score", "avg_score"]]
+    return grouped[["episode_id", "start", "end", "duration_s", "max_score", "avg_score", "peak_wheeze"]]
 
 
 def main() -> None:
     st.set_page_config(page_title="Pain Monitoring Dashboard", layout="wide")
-    st.title("Patient Pain Duration Dashboard")
-    st.caption("Visualize pain score, pain episodes, and total pain duration from live logs.")
+    st.title("Patient Pain and Wheeze Dashboard")
+    st.caption("Visualize pain score, wheeze burden, and pain episode duration from live logs.")
 
     auto_refresh = st.sidebar.checkbox("Auto refresh", value=False)
     refresh_seconds = st.sidebar.slider("Refresh every (seconds)", min_value=2, max_value=30, value=5)
@@ -98,43 +101,32 @@ def main() -> None:
         st.error("Selected file is empty.")
         return
 
-    if "pain_level" in data.columns:
-        levels = sorted(data["pain_level"].dropna().unique())
-        picked = st.sidebar.multiselect("Pain level", levels, default=levels)
-        if picked:
-            data = data[data["pain_level"].isin(picked)]
-
     avg_score = float(data["pain_score_0_10"].mean()) if "pain_score_0_10" in data.columns else 0.0
     max_score = float(data["pain_score_0_10"].max()) if "pain_score_0_10" in data.columns else 0.0
     latest_total = float(data["total_pain_duration_s"].dropna().iloc[-1]) if "total_pain_duration_s" in data.columns and not data["total_pain_duration_s"].dropna().empty else 0.0
-    active_ratio = float(data["pain_active"].mean() * 100.0) if "pain_active" in data.columns else 0.0
+    avg_wheeze = float(data["wheeze_probability"].mean()) if "wheeze_probability" in data.columns else 0.0
 
     top = st.columns(4)
     top[0].metric("Average pain", f"{avg_score:.2f}/10")
     top[1].metric("Peak pain", f"{max_score:.2f}/10")
     top[2].metric("Total pain duration", f"{latest_total:.1f} sec")
-    top[3].metric("Pain-active frames", f"{active_ratio:.1f}%")
+    top[3].metric("Average wheeze", f"{avg_wheeze:.2f}")
 
     left, right = st.columns(2)
     with left:
         st.subheader("Pain Score Over Time")
         if {"timestamp", "pain_score_0_10"}.issubset(data.columns):
-            chart = data.sort_values("timestamp")[ ["timestamp", "pain_score_0_10"] ]
+            chart = data.sort_values("timestamp")[["timestamp", "pain_score_0_10"]]
             st.line_chart(chart, x="timestamp", y="pain_score_0_10")
 
     with right:
-        st.subheader("Total Pain Duration Over Time")
-        if {"timestamp", "total_pain_duration_s"}.issubset(data.columns):
-            chart = data.sort_values("timestamp")[ ["timestamp", "total_pain_duration_s"] ]
-            st.line_chart(chart, x="timestamp", y="total_pain_duration_s")
+        st.subheader("Wheeze Probability Over Time")
+        if {"timestamp", "wheeze_probability"}.issubset(data.columns):
+            chart = data.sort_values("timestamp")[["timestamp", "wheeze_probability"]]
+            st.line_chart(chart, x="timestamp", y="wheeze_probability")
 
-    st.subheader("Pain Level Distribution")
-    if "pain_level" in data.columns:
-        st.bar_chart(data["pain_level"].value_counts())
-
-    episodes = summarize_episodes(data)
     st.subheader("Episode Summary")
-    st.dataframe(episodes, use_container_width=True, height=220)
+    st.dataframe(summarize_episodes(data), use_container_width=True, height=220)
 
     event_file = _find_episode_events_for_session(selected_path)
     if event_file is not None:

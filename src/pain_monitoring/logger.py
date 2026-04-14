@@ -37,6 +37,17 @@ class PainLiveLogger:
                     "mouth_tension",
                     "smile_absence",
                     "motion_score",
+                    "eye_symmetry",
+                    "brow_energy",
+                    "mouth_opening",
+                    "lower_face_motion",
+                    "face_edge_density",
+                    "nasal_tension",
+                    "respiratory_motion",
+                    "wheeze_tonality",
+                    "wheeze_band_energy",
+                    "wheeze_entropy",
+                    "wheeze_probability",
                     "face_detected",
                 ]
             )
@@ -44,18 +55,16 @@ class PainLiveLogger:
     def _write_episode_header(self) -> None:
         with self.episode_file.open("w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
-            writer.writerow(
-                [
-                    "timestamp",
-                    "event",
-                    "episode_id",
-                    "start_time",
-                    "end_time",
-                    "duration_seconds",
-                    "max_score",
-                    "avg_score",
-                ]
-            )
+            writer.writerow([
+                "timestamp",
+                "event",
+                "episode_id",
+                "start_time",
+                "end_time",
+                "duration_seconds",
+                "max_score",
+                "avg_score",
+            ])
 
     def log(
         self,
@@ -87,6 +96,17 @@ class PainLiveLogger:
                     f"{features.mouth_tension:.4f}",
                     f"{features.smile_absence:.4f}",
                     f"{features.motion_score:.4f}",
+                    f"{features.eye_symmetry:.4f}",
+                    f"{features.brow_energy:.4f}",
+                    f"{features.mouth_opening:.4f}",
+                    f"{features.lower_face_motion:.4f}",
+                    f"{features.face_edge_density:.4f}",
+                    f"{features.nasal_tension:.4f}",
+                    f"{features.respiratory_motion:.4f}",
+                    f"{features.wheeze_tonality:.4f}",
+                    f"{features.wheeze_band_energy:.4f}",
+                    f"{features.wheeze_entropy:.4f}",
+                    f"{features.wheeze_probability:.4f}",
                     int(features.face_detected),
                 ]
             )

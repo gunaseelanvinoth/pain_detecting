@@ -14,5 +14,17 @@
   "neutral_anchor_score": 1.0,
   "save_live_data": true,
   "log_every_n_frames": 4,
-  "patient_id": 1
+  "patient_id": 1,
+  "enable_audio_monitoring": true,
+  "audio_window_seconds": 1.5,
+  "audio_sample_rate": 16000,
+  "audio_channels": 1,
+  "dataset_augmentation_factor": 20,
+  "training_ridge_alpha": 0.8,
+  "overlay_scale": 0.85,
+  "overlay_anchor": "top_right",
+  "pain_display_alpha_still": 0.14,
+  "pain_display_alpha_change": 0.42,
+  "wheeze_display_alpha": 0.18,
+  "expression_change_threshold": 0.22
 }

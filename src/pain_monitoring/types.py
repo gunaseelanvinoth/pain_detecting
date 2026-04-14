@@ -13,6 +13,17 @@ class FramePainFeatures:
     mouth_tension: float
     smile_absence: float
     motion_score: float
+    eye_symmetry: float = 0.0
+    brow_energy: float = 0.0
+    mouth_opening: float = 0.0
+    lower_face_motion: float = 0.0
+    face_edge_density: float = 0.0
+    nasal_tension: float = 0.0
+    respiratory_motion: float = 0.0
+    wheeze_tonality: float = 0.0
+    wheeze_band_energy: float = 0.0
+    wheeze_entropy: float = 0.0
+    wheeze_probability: float = 0.0
 
 
 @dataclass
@@ -60,6 +71,8 @@ class RuntimeState:
     previous_timestamp: Optional[float] = None
     smoothed_score: float = 0.0
     smoothed_pain_score: float = 0.0
+    smoothed_wheeze_probability: float = 0.0
+    previous_raw_pain_score: float = 0.0
     calibration_scores: list[float] = field(default_factory=list)
     baseline_score: Optional[float] = None
     time_above_start: float = 0.0

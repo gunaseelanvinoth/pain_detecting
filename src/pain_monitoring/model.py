@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -13,101 +13,218 @@ def _clamp(value: float, low: float, high: float) -> float:
     return float(max(low, min(high, value)))
 
 
+FACE_FEATURE_COLUMNS = [
+    "eye_closure",
+    "brow_tension",
+    "mouth_tension",
+    "smile_absence",
+    "motion_score",
+    "eye_symmetry",
+    "brow_energy",
+    "mouth_opening",
+    "lower_face_motion",
+    "face_edge_density",
+    "nasal_tension",
+]
+
+RESPIRATORY_FEATURE_COLUMNS = [
+    "respiratory_motion",
+    "wheeze_tonality",
+    "wheeze_band_energy",
+    "wheeze_entropy",
+]
+
+FEATURE_COLUMNS = FACE_FEATURE_COLUMNS + RESPIRATORY_FEATURE_COLUMNS
+TARGET_COLUMN = "pain_label_0_10"
+WHEEZE_TARGET_COLUMN = "wheeze_label_0_1"
+
+
+def _sigmoid(values):
+    array = np.asarray(values, dtype=float)
+    return 1.0 / (1.0 + np.exp(-array))
+
+
+def _ensure_feature_frame(df):
+    frame = df.copy()
+    for column in FEATURE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = 0.0
+    return frame
+
+
+def _build_design_matrix(x: np.ndarray) -> np.ndarray:
+    squares = x**2
+    interactions = np.column_stack(
+        [
+            x[:, 0] * x[:, 1],
+            x[:, 1] * x[:, 2],
+            x[:, 2] * x[:, 4],
+            x[:, 0] * x[:, 7],
+            x[:, 3] * x[:, 7],
+            x[:, 4] * x[:, 8],
+            x[:, 5] * x[:, 9],
+            x[:, 2] * x[:, 10],
+            x[:, 11] * x[:, 12],
+            x[:, 12] * x[:, 13],
+            x[:, 11] * x[:, 13],
+            x[:, 10] * x[:, 11],
+        ]
+    )
+    return np.concatenate([x, squares, interactions], axis=1)
+
+
+def _standardize(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    means = x.mean(axis=0)
+    scales = x.std(axis=0)
+    scales[scales < 1e-6] = 1.0
+    return (x - means) / scales, means, scales
+
+
+def _fit_ridge(x: np.ndarray, y: np.ndarray, alpha: float) -> np.ndarray:
+    x_std, means, scales = _standardize(x)
+    design = np.concatenate([x_std, np.ones((x_std.shape[0], 1), dtype=float)], axis=1)
+    identity = np.eye(design.shape[1], dtype=float)
+    identity[-1, -1] = 0.0
+    coeffs = np.linalg.solve(design.T @ design + alpha * identity, design.T @ y)
+    return np.concatenate([means, scales, coeffs[:-1], np.array([coeffs[-1]], dtype=float)])
+
+
+def _predict_linear(blob: np.ndarray, x: np.ndarray) -> np.ndarray:
+    feature_count = x.shape[1]
+    means = blob[:feature_count]
+    scales = blob[feature_count : feature_count * 2]
+    coeffs = blob[feature_count * 2 : feature_count * 3]
+    bias = blob[-1]
+    x_std = (x - means) / scales
+    return x_std @ coeffs + bias
+
+
 @dataclass
 class PainLinearModel:
-    eye_closure: float = 3.0
-    brow_tension: float = 2.4
-    mouth_tension: float = 1.8
-    smile_absence: float = 1.3
-    motion_score: float = 1.5
-    bias: float = 0.0
+    version: str = "multimodal-ridge-v2"
+    feature_columns: list[str] = field(default_factory=lambda: FEATURE_COLUMNS.copy())
+    design_feature_count: int = 0
+    pain_blob: list[float] = field(default_factory=list)
+    wheeze_blob: list[float] = field(default_factory=list)
+    pain_training_rows: int = 0
+    wheeze_training_rows: int = 0
+
+    def _feature_vector(self, features: FramePainFeatures) -> np.ndarray:
+        values = np.array([float(getattr(features, column, 0.0)) for column in self.feature_columns], dtype=float)
+        return _build_design_matrix(values[None, :])[0]
 
     def predict_score(self, features: FramePainFeatures) -> float:
-        raw = (
-            self.eye_closure * features.eye_closure
-            + self.brow_tension * features.brow_tension
-            + self.mouth_tension * features.mouth_tension
-            + self.smile_absence * features.smile_absence
-            + self.motion_score * features.motion_score
-            + self.bias
-        )
+        if self.pain_blob:
+            raw = float(_predict_linear(np.array(self.pain_blob, dtype=float), self._feature_vector(features)[None, :])[0])
+        else:
+            raw = (
+                3.3 * features.eye_closure
+                + 2.8 * features.brow_tension
+                + 2.4 * features.mouth_tension
+                + 1.4 * features.motion_score
+                + 1.0 * features.mouth_opening
+                + 0.8 * features.lower_face_motion
+                + 0.6 * features.respiratory_motion
+                + 1.2 * features.wheeze_probability
+            )
         return _clamp(raw, 0.0, 10.0)
+
+    def predict_wheeze(self, features: FramePainFeatures) -> float:
+        if self.wheeze_blob:
+            raw = float(_predict_linear(np.array(self.wheeze_blob, dtype=float), self._feature_vector(features)[None, :])[0])
+            return _clamp(float(_sigmoid([raw])[0]), 0.0, 1.0)
+        heuristic = (
+            0.40 * features.wheeze_tonality
+            + 0.30 * features.wheeze_band_energy
+            + 0.20 * features.wheeze_entropy
+            + 0.10 * features.respiratory_motion
+        )
+        return _clamp(heuristic, 0.0, 1.0)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "eye_closure": self.eye_closure,
-            "brow_tension": self.brow_tension,
-            "mouth_tension": self.mouth_tension,
-            "smile_absence": self.smile_absence,
-            "motion_score": self.motion_score,
-            "bias": self.bias,
+            "version": self.version,
+            "feature_columns": self.feature_columns,
+            "design_feature_count": self.design_feature_count,
+            "pain_blob": self.pain_blob,
+            "wheeze_blob": self.wheeze_blob,
+            "pain_training_rows": self.pain_training_rows,
+            "wheeze_training_rows": self.wheeze_training_rows,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
     def load(path: Path) -> "PainLinearModel":
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if "pain_blob" not in payload:
+            return PainLinearModel()
         return PainLinearModel(
-            eye_closure=float(payload.get("eye_closure", 3.0)),
-            brow_tension=float(payload.get("brow_tension", 2.4)),
-            mouth_tension=float(payload.get("mouth_tension", 1.8)),
-            smile_absence=float(payload.get("smile_absence", 1.3)),
-            motion_score=float(payload.get("motion_score", 1.5)),
-            bias=float(payload.get("bias", 0.0)),
+            version=str(payload.get("version", "multimodal-ridge-v2")),
+            feature_columns=list(payload.get("feature_columns", FEATURE_COLUMNS)),
+            design_feature_count=int(payload.get("design_feature_count", 0)),
+            pain_blob=list(payload.get("pain_blob", [])),
+            wheeze_blob=list(payload.get("wheeze_blob", [])),
+            pain_training_rows=int(payload.get("pain_training_rows", 0)),
+            wheeze_training_rows=int(payload.get("wheeze_training_rows", 0)),
         )
 
 
-FEATURE_COLUMNS = [
-    "eye_closure",
-    "brow_tension",
-    "mouth_tension",
-    "smile_absence",
-    "motion_score",
-]
-TARGET_COLUMN = "pain_label_0_10"
+def train_linear_model_from_frame(df, ridge_alpha: float = 0.8) -> tuple[PainLinearModel, dict]:
+    frame = _ensure_feature_frame(df)
+    if TARGET_COLUMN not in frame.columns and WHEEZE_TARGET_COLUMN not in frame.columns:
+        raise ValueError(f"Missing required columns for training: ['{TARGET_COLUMN}', '{WHEEZE_TARGET_COLUMN}']")
 
+    pain_rows = frame.dropna(subset=[TARGET_COLUMN]) if TARGET_COLUMN in frame.columns else frame.iloc[0:0]
+    wheeze_rows = frame.dropna(subset=[WHEEZE_TARGET_COLUMN]) if WHEEZE_TARGET_COLUMN in frame.columns else frame.iloc[0:0]
 
-def train_linear_model_from_frame(df) -> tuple[PainLinearModel, dict]:
-    required = FEATURE_COLUMNS + [TARGET_COLUMN]
-    missing = [column for column in required if column not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns for training: {missing}")
-
-    clean = df[required].dropna()
-    if clean.empty:
+    if pain_rows.empty and wheeze_rows.empty:
         raise ValueError("No valid rows found for training after dropping NaN values.")
 
-    x = clean[FEATURE_COLUMNS].to_numpy(dtype=float)
-    y = clean[TARGET_COLUMN].to_numpy(dtype=float)
+    if not pain_rows.empty:
+        x = pain_rows[FEATURE_COLUMNS].to_numpy(dtype=float)
+        x_design = _build_design_matrix(x)
+        y_pain = pain_rows[TARGET_COLUMN].to_numpy(dtype=float)
+        pain_blob = _fit_ridge(x_design, y_pain, ridge_alpha)
+        pain_predictions = np.clip(_predict_linear(pain_blob, x_design), 0.0, 10.0)
+        pain_mae = float(np.mean(np.abs(pain_predictions - y_pain)))
+        pain_rmse = float(np.sqrt(np.mean((pain_predictions - y_pain) ** 2)))
+        design_feature_count = int(x_design.shape[1])
+    else:
+        pain_blob = np.array([], dtype=float)
+        pain_mae = None
+        pain_rmse = None
+        design_feature_count = 0
 
-    x_augmented = np.concatenate([x, np.ones((x.shape[0], 1), dtype=float)], axis=1)
-    coeffs, _, _, _ = np.linalg.lstsq(x_augmented, y, rcond=None)
+    if not wheeze_rows.empty:
+        x_wheeze = _build_design_matrix(wheeze_rows[FEATURE_COLUMNS].to_numpy(dtype=float))
+        y_wheeze = wheeze_rows[WHEEZE_TARGET_COLUMN].to_numpy(dtype=float)
+        wheeze_blob = _fit_ridge(x_wheeze, y_wheeze, ridge_alpha)
+        wheeze_predictions = np.clip(_sigmoid(_predict_linear(wheeze_blob, x_wheeze)), 0.0, 1.0)
+        wheeze_mae = float(np.mean(np.abs(wheeze_predictions - y_wheeze)))
+        if design_feature_count == 0:
+            design_feature_count = int(x_wheeze.shape[1])
+    else:
+        wheeze_blob = np.array([], dtype=float)
+        wheeze_mae = None
 
     model = PainLinearModel(
-        eye_closure=float(coeffs[0]),
-        brow_tension=float(coeffs[1]),
-        mouth_tension=float(coeffs[2]),
-        smile_absence=float(coeffs[3]),
-        motion_score=float(coeffs[4]),
-        bias=float(coeffs[5]),
+        feature_columns=FEATURE_COLUMNS.copy(),
+        design_feature_count=design_feature_count,
+        pain_blob=pain_blob.tolist(),
+        wheeze_blob=wheeze_blob.tolist(),
+        pain_training_rows=int(pain_rows.shape[0]),
+        wheeze_training_rows=int(wheeze_rows.shape[0]),
     )
 
-    predictions = np.clip(x_augmented @ coeffs, 0.0, 10.0)
-    mae = float(np.mean(np.abs(predictions - y)))
-    rmse = float(np.sqrt(np.mean((predictions - y) ** 2)))
-
     metrics = {
-        "rows_used": int(clean.shape[0]),
-        "mae": mae,
-        "rmse": rmse,
-        "coefficients": {
-            "eye_closure": model.eye_closure,
-            "brow_tension": model.brow_tension,
-            "mouth_tension": model.mouth_tension,
-            "smile_absence": model.smile_absence,
-            "motion_score": model.motion_score,
-            "bias": model.bias,
-        },
+        "rows_used": int(max(pain_rows.shape[0], wheeze_rows.shape[0])),
+        "mae": pain_mae,
+        "rmse": pain_rmse,
+        "wheeze_mae": wheeze_mae,
+        "pain_training_rows": int(pain_rows.shape[0]),
+        "wheeze_training_rows": int(wheeze_rows.shape[0]),
+        "feature_columns": FEATURE_COLUMNS,
+        "design_feature_count": design_feature_count,
     }
     return model, metrics

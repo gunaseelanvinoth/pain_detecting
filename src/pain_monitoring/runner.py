@@ -7,40 +7,86 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from pain_monitoring.audio_features import FileAudioFeatureProvider, MicrophoneAudioFeatureProvider
 from pain_monitoring.config import PainMonitoringConfig
+from pain_monitoring.dataset import prepare_training_dataset
 from pain_monitoring.episode_tracker import update_duration_state
 from pain_monitoring.io_utils import write_json
 from pain_monitoring.logger import PainLiveLogger
-from pain_monitoring.model import FEATURE_COLUMNS, TARGET_COLUMN, PainLinearModel, train_linear_model_from_frame
+from pain_monitoring.model import FEATURE_COLUMNS, TARGET_COLUMN, WHEEZE_TARGET_COLUMN, PainLinearModel, train_linear_model_from_frame
 from pain_monitoring.reporting import summarize_session_csv
 from pain_monitoring.types import RuntimeState
 
 
-def _predict_array(model: PainLinearModel, x: np.ndarray) -> np.ndarray:
-    coeffs = np.array(
-        [
-            model.eye_closure,
-            model.brow_tension,
-            model.mouth_tension,
-            model.smile_absence,
-            model.motion_score,
-            model.bias,
-        ],
-        dtype=float,
-    )
-    x_augmented = np.concatenate([x, np.ones((x.shape[0], 1), dtype=float)], axis=1)
-    return np.clip(x_augmented @ coeffs, 0.0, 10.0)
+def _smooth_value(current_smoothed: float, new_value: float, alpha: float) -> float:
+    if current_smoothed <= 0.0:
+        return float(new_value)
+    return float(alpha * new_value + (1.0 - alpha) * current_smoothed)
+
+
+def _expression_change_strength(raw_score: float, previous_raw_score: float, features) -> float:
+    expressive_motion = 0.45 * features.lower_face_motion + 0.30 * features.motion_score + 0.25 * features.mouth_opening
+    score_delta = abs(raw_score - previous_raw_score)
+    return float(np.clip(expressive_motion + 0.12 * score_delta, 0.0, 1.0))
+
+
+def _predict_array(model: PainLinearModel, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    frame_rows = []
+    for row in x:
+        feature_map = {name: float(value) for name, value in zip(FEATURE_COLUMNS, row)}
+        from pain_monitoring.types import FramePainFeatures
+
+        features = FramePainFeatures(
+            face_detected=True,
+            face_box=None,
+            eye_closure=feature_map.get("eye_closure", 0.0),
+            brow_tension=feature_map.get("brow_tension", 0.0),
+            mouth_tension=feature_map.get("mouth_tension", 0.0),
+            smile_absence=feature_map.get("smile_absence", 0.0),
+            motion_score=feature_map.get("motion_score", 0.0),
+            eye_symmetry=feature_map.get("eye_symmetry", 0.0),
+            brow_energy=feature_map.get("brow_energy", 0.0),
+            mouth_opening=feature_map.get("mouth_opening", 0.0),
+            lower_face_motion=feature_map.get("lower_face_motion", 0.0),
+            face_edge_density=feature_map.get("face_edge_density", 0.0),
+            nasal_tension=feature_map.get("nasal_tension", 0.0),
+            respiratory_motion=feature_map.get("respiratory_motion", 0.0),
+            wheeze_tonality=feature_map.get("wheeze_tonality", 0.0),
+            wheeze_band_energy=feature_map.get("wheeze_band_energy", 0.0),
+            wheeze_entropy=feature_map.get("wheeze_entropy", 0.0),
+            wheeze_probability=feature_map.get("wheeze_probability", 0.0),
+        )
+        frame_rows.append((model.predict_score(features), model.predict_wheeze(features)))
+    pain = np.array([item[0] for item in frame_rows], dtype=float)
+    wheeze = np.array([item[1] for item in frame_rows], dtype=float)
+    return pain, wheeze
+
+
+def _make_audio_provider(audio_path: Path | None, config: PainMonitoringConfig):
+    if not config.enable_audio_monitoring:
+        return None
+    if audio_path is not None:
+        return FileAudioFeatureProvider(audio_path=audio_path, window_seconds=config.audio_window_seconds)
+    try:
+        return MicrophoneAudioFeatureProvider(
+            sample_rate=config.audio_sample_rate,
+            window_seconds=config.audio_window_seconds,
+            channels=config.audio_channels,
+        )
+    except Exception:
+        return None
 
 
 def run_live_monitor(
     model_path: Path | None = None,
     video_path: Path | None = None,
+    audio_path: Path | None = None,
     config: PainMonitoringConfig | None = None,
 ) -> dict:
     import cv2
 
-    from pain_monitoring.features import extract_frame_features
-    from pain_monitoring.overlay import draw_overlay, level_from_score
+    from pain_monitoring.features import apply_audio_snapshot, extract_frame_features
+    from pain_monitoring.overlay import draw_overlay, level_from_score, wheeze_level_from_probability
 
     cfg = config or PainMonitoringConfig()
     cfg.validate()
@@ -60,18 +106,14 @@ def run_live_monitor(
 
     runtime = RuntimeState()
     logger = PainLiveLogger(Path.cwd() / "sample_data") if cfg.save_live_data else None
-
-    source_text = str(video_path) if video_path is not None else f"camera_index={cfg.camera_index}"
-    print(f"[INFO] Starting live pain monitor on source: {source_text}")
-    print("[INFO] Preview window opened. Press 'q' to stop.")
-    if cfg.calibration_seconds > 0:
-        print(f"[INFO] Calibration running for ~{cfg.calibration_seconds:.1f}s. Keep a neutral face.")
+    audio_provider = _make_audio_provider(audio_path=audio_path, config=cfg)
 
     frame_idx = 0
     processed = 0
     start_wall = time.time()
     calibration_done = cfg.calibration_seconds <= 0.0
     calibration_text = "Calibration skipped"
+    latest_wheeze_probability = 0.0
 
     try:
         while True:
@@ -80,6 +122,7 @@ def run_live_monitor(
                 break
 
             now = time.time()
+            elapsed = now - start_wall
             features, gray = extract_frame_features(
                 frame=frame,
                 previous_gray=runtime.previous_gray,
@@ -89,40 +132,47 @@ def run_live_monitor(
                 smile_detector=smile_detector,
                 config=cfg,
             )
+            if audio_provider is not None:
+                snapshot = audio_provider.get_snapshot(elapsed)
+                features = apply_audio_snapshot(features, snapshot)
+
             runtime.previous_gray = gray
             runtime.previous_face_box = features.face_box if features.face_detected else runtime.previous_face_box
 
             raw_score = model.predict_score(features)
+            latest_wheeze_probability = model.predict_wheeze(features)
+            features.wheeze_probability = latest_wheeze_probability
 
             elapsed_calibration = now - start_wall
             if not calibration_done:
                 if features.face_detected:
                     runtime.calibration_scores.append(raw_score)
-                if (
-                    elapsed_calibration >= cfg.calibration_seconds
-                    and len(runtime.calibration_scores) >= cfg.calibration_min_samples
-                ):
+                if elapsed_calibration >= cfg.calibration_seconds and len(runtime.calibration_scores) >= cfg.calibration_min_samples:
                     runtime.baseline_score = float(np.median(runtime.calibration_scores))
                     calibration_done = True
 
             adjusted_score = raw_score
             if runtime.baseline_score is not None:
-                adjusted_score = np.clip(
-                    raw_score - runtime.baseline_score + cfg.neutral_anchor_score,
-                    0.0,
-                    10.0,
-                )
+                adjusted_score = np.clip(raw_score - runtime.baseline_score + cfg.neutral_anchor_score, 0.0, 10.0)
 
-            if runtime.smoothed_pain_score <= 0.0:
-                runtime.smoothed_pain_score = float(adjusted_score)
-            else:
-                runtime.smoothed_pain_score = float(
-                    cfg.prediction_smoothing_alpha * adjusted_score
-                    + (1.0 - cfg.prediction_smoothing_alpha) * runtime.smoothed_pain_score
-                )
+            change_strength = _expression_change_strength(adjusted_score, runtime.previous_raw_pain_score, features)
+            adaptive_alpha = cfg.pain_display_alpha_still
+            if change_strength >= cfg.expression_change_threshold:
+                adaptive_alpha = cfg.pain_display_alpha_change
+
+            runtime.smoothed_pain_score = _smooth_value(runtime.smoothed_pain_score, adjusted_score, adaptive_alpha)
+            runtime.smoothed_wheeze_probability = _smooth_value(
+                runtime.smoothed_wheeze_probability,
+                latest_wheeze_probability,
+                cfg.wheeze_display_alpha,
+            )
+            latest_wheeze_probability = runtime.smoothed_wheeze_probability
+            features.wheeze_probability = latest_wheeze_probability
+            runtime.previous_raw_pain_score = float(adjusted_score)
 
             score = runtime.smoothed_pain_score
             level = level_from_score(score)
+            wheeze_level = wheeze_level_from_probability(latest_wheeze_probability)
             duration = update_duration_state(runtime, score, now, cfg)
 
             if not calibration_done:
@@ -132,16 +182,28 @@ def run_live_monitor(
                 )
             else:
                 baseline = runtime.baseline_score if runtime.baseline_score is not None else 0.0
-                calibration_text = f"Calibration ready | baseline={baseline:0.2f} | raw={raw_score:0.2f}"
+                calibration_text = (
+                    f"Calibration ready | baseline={baseline:0.2f} | raw={raw_score:0.2f} | wheeze={latest_wheeze_probability:0.2f}"
+                )
 
-            draw_overlay(frame, features, score, level, duration, calibration_text=calibration_text)
+            draw_overlay(
+                frame,
+                features,
+                score,
+                level,
+                duration,
+                wheeze_level=wheeze_level,
+                calibration_text=calibration_text,
+                overlay_scale=cfg.overlay_scale,
+                overlay_anchor=cfg.overlay_anchor,
+            )
 
             if logger is not None and frame_idx % cfg.log_every_n_frames == 0:
                 timestamp_iso = datetime.now().astimezone().isoformat(timespec="seconds")
                 logger.log(
                     timestamp_iso=timestamp_iso,
                     frame_idx=frame_idx,
-                    elapsed_seconds=(now - start_wall),
+                    elapsed_seconds=elapsed,
                     patient_id=cfg.patient_id,
                     score_0_10=score,
                     level=level,
@@ -157,6 +219,8 @@ def run_live_monitor(
                 break
     finally:
         capture.release()
+        if audio_provider is not None and hasattr(audio_provider, "close"):
+            audio_provider.close()
         cv2.destroyAllWindows()
 
     elapsed = max(0.001, time.time() - start_wall)
@@ -164,28 +228,17 @@ def run_live_monitor(
     if runtime.active_episode is not None:
         total_duration += max(0.0, time.time() - runtime.active_episode.start_time)
 
-    summary = {
+    return {
         "frames_processed": processed,
         "elapsed_seconds": elapsed,
         "fps": processed / elapsed,
         "total_pain_duration_seconds": total_duration,
-        "closed_episodes": [
-            {
-                "episode_id": item.episode_id,
-                "start_time": item.start_time,
-                "end_time": item.end_time,
-                "duration_seconds": item.duration_seconds,
-                "max_score": item.max_score,
-                "avg_score": item.avg_score,
-            }
-            for item in runtime.closed_episodes
-        ],
+        "latest_wheeze_probability": latest_wheeze_probability,
         "log_file": str(logger.output_file) if logger is not None else None,
         "episode_event_file": str(logger.episode_file) if logger is not None else None,
         "calibration_done": calibration_done,
         "baseline_score": runtime.baseline_score,
     }
-    return summary
 
 
 def extract_features_from_video(
@@ -194,11 +247,13 @@ def extract_features_from_video(
     config: PainMonitoringConfig | None = None,
     sample_every_n_frames: int = 3,
     fixed_label: float | None = None,
+    fixed_wheeze_label: float | None = None,
+    audio_path: Path | None = None,
     show_preview: bool = True,
 ) -> dict:
     import cv2
 
-    from pain_monitoring.features import extract_frame_features
+    from pain_monitoring.features import apply_audio_snapshot, extract_frame_features
 
     cfg = config or PainMonitoringConfig()
     cfg.validate()
@@ -209,13 +264,13 @@ def extract_features_from_video(
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video file: {video_path}")
 
-    print(f"[INFO] Extracting from video: {video_path}")
-    if show_preview:
-        print("[INFO] Preview window opened. Press 'q' to stop early.")
-
     face_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     eye_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
     smile_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
+    audio_provider = FileAudioFeatureProvider(audio_path=audio_path, window_seconds=cfg.audio_window_seconds) if audio_path else None
+
+    fps = capture.get(cv2.CAP_PROP_FPS)
+    fps = fps if fps and fps > 0 else 25.0
 
     prev_gray = None
     prev_face_box = None
@@ -228,6 +283,7 @@ def extract_features_from_video(
             if not ok:
                 break
 
+            elapsed_seconds = frame_idx / fps
             features, gray = extract_frame_features(
                 frame=frame,
                 previous_gray=prev_gray,
@@ -237,22 +293,20 @@ def extract_features_from_video(
                 smile_detector=smile_detector,
                 config=cfg,
             )
+            if audio_provider is not None:
+                features = apply_audio_snapshot(features, audio_provider.get_snapshot(elapsed_seconds))
+
             prev_gray = gray
             if features.face_detected:
                 prev_face_box = features.face_box
 
             if frame_idx % sample_every_n_frames == 0 and features.face_detected:
-                row = {
-                    "video_file": str(video_path.name),
-                    "frame_idx": frame_idx,
-                    "eye_closure": features.eye_closure,
-                    "brow_tension": features.brow_tension,
-                    "mouth_tension": features.mouth_tension,
-                    "smile_absence": features.smile_absence,
-                    "motion_score": features.motion_score,
-                }
+                row = {"video_file": str(video_path.name), "frame_idx": frame_idx, **{column: float(getattr(features, column, 0.0)) for column in FEATURE_COLUMNS}}
+                row["wheeze_probability"] = float(features.wheeze_probability)
                 if fixed_label is not None:
                     row[TARGET_COLUMN] = float(fixed_label)
+                if fixed_wheeze_label is not None:
+                    row[WHEEZE_TARGET_COLUMN] = float(np.clip(fixed_wheeze_label, 0.0, 1.0))
                 rows.append(row)
 
             if show_preview:
@@ -260,34 +314,8 @@ def extract_features_from_video(
                 if features.face_detected and features.face_box is not None:
                     x, y, w, h = features.face_box
                     cv2.rectangle(preview, (x, y), (x + w, y + h), (0, 200, 0), 2)
-                    cv2.putText(
-                        preview,
-                        "Face detected",
-                        (x, max(20, y - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.55,
-                        (0, 200, 0),
-                        2,
-                    )
-                else:
-                    cv2.putText(
-                        preview,
-                        "Face not detected",
-                        (20, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 80, 255),
-                        2,
-                    )
-                cv2.putText(
-                    preview,
-                    f"Frame: {frame_idx} | Rows: {len(rows)}",
-                    (20, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    (255, 255, 255),
-                    2,
-                )
+                cv2.putText(preview, f"Frame: {frame_idx} | Rows: {len(rows)}", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(preview, f"Wheeze: {features.wheeze_probability:0.2f}", (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
                 cv2.imshow("Feature Extraction Preview", preview)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
@@ -303,26 +331,27 @@ def extract_features_from_video(
 
     return {
         "video": str(video_path),
+        "audio": str(audio_path) if audio_path else None,
         "output_csv": str(output_csv_path),
         "rows": len(rows),
         "label_attached": fixed_label is not None,
+        "wheeze_label_attached": fixed_wheeze_label is not None,
     }
 
 
-def train_from_labeled_csv(csv_path: Path, model_out: Path, metrics_out: Path | None = None) -> dict:
+def train_from_labeled_csv(
+    csv_path: Path,
+    model_out: Path,
+    metrics_out: Path | None = None,
+    ridge_alpha: float = 0.8,
+) -> dict:
     frame = pd.read_csv(csv_path)
-    model, metrics = train_linear_model_from_frame(frame)
+    model, metrics = train_linear_model_from_frame(frame, ridge_alpha=ridge_alpha)
     model.save(model_out)
 
-    payload = {
-        "source_csv": str(csv_path),
-        "model_path": str(model_out),
-        **metrics,
-    }
-
+    payload = {"source_csv": str(csv_path), "model_path": str(model_out), **metrics}
     if metrics_out is not None:
         write_json(metrics_out, payload)
-
     return payload
 
 
@@ -330,32 +359,50 @@ def evaluate_from_csv(model_path: Path, csv_path: Path) -> dict:
     model = PainLinearModel.load(model_path)
     frame = pd.read_csv(csv_path)
 
+    for column in FEATURE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = 0.0
     required = FEATURE_COLUMNS + [TARGET_COLUMN]
     missing = [column for column in required if column not in frame.columns]
     if missing:
         raise ValueError(f"Missing required columns for evaluation: {missing}")
 
-    clean = frame[required].dropna()
+    clean = frame[required + ([WHEEZE_TARGET_COLUMN] if WHEEZE_TARGET_COLUMN in frame.columns else [])].dropna(subset=[TARGET_COLUMN])
     if clean.empty:
         raise ValueError("No valid rows to evaluate.")
 
     x = clean[FEATURE_COLUMNS].to_numpy(dtype=float)
     y_true = clean[TARGET_COLUMN].to_numpy(dtype=float)
+    pain_pred, wheeze_pred = _predict_array(model, x)
 
-    y_pred = _predict_array(model, x)
-    mae = float(np.mean(np.abs(y_pred - y_true)))
-    rmse = float(np.sqrt(np.mean((y_pred - y_true) ** 2)))
-
-    return {
+    payload = {
         "model_path": str(model_path),
         "csv_path": str(csv_path),
         "rows_evaluated": int(clean.shape[0]),
-        "mae": mae,
-        "rmse": rmse,
-        "within_1_point_percent": float(np.mean(np.abs(y_pred - y_true) <= 1.0) * 100.0),
-        "within_2_points_percent": float(np.mean(np.abs(y_pred - y_true) <= 2.0) * 100.0),
+        "mae": float(np.mean(np.abs(pain_pred - y_true))),
+        "rmse": float(np.sqrt(np.mean((pain_pred - y_true) ** 2))),
+        "within_1_point_percent": float(np.mean(np.abs(pain_pred - y_true) <= 1.0) * 100.0),
+        "within_2_points_percent": float(np.mean(np.abs(pain_pred - y_true) <= 2.0) * 100.0),
     }
+    if WHEEZE_TARGET_COLUMN in clean.columns and clean[WHEEZE_TARGET_COLUMN].notna().any():
+        y_wheeze = clean[WHEEZE_TARGET_COLUMN].fillna(0.0).to_numpy(dtype=float)
+        payload["wheeze_mae"] = float(np.mean(np.abs(wheeze_pred - y_wheeze)))
+    return payload
 
 
 def summarize_session(session_csv: Path, summary_out: Path | None = None) -> dict:
     return summarize_session_csv(session_csv_path=session_csv, summary_out=summary_out)
+
+
+def build_training_dataset(
+    csv_paths: list[Path],
+    output_csv: Path,
+    config: PainMonitoringConfig | None = None,
+    augment_factor: int | None = None,
+) -> dict:
+    cfg = config or PainMonitoringConfig()
+    return prepare_training_dataset(
+        csv_paths=csv_paths,
+        output_csv_path=output_csv,
+        augment_factor=cfg.dataset_augmentation_factor if augment_factor is None else augment_factor,
+    )

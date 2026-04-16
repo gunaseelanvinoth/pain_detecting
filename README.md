@@ -1,6 +1,8 @@
 ﻿# Patient Pain and Wheeze Monitoring
 
-This upgraded project now supports a richer multimodal pipeline:
+This project detects visible pain-related facial changes and also estimates wheezing from respiratory audio or microphone input.
+
+It includes:
 
 - More facial-expression features for pain estimation
 - Optional wheeze analysis from WAV audio or live microphone input
@@ -12,16 +14,76 @@ This upgraded project now supports a richer multimodal pipeline:
 
 This is still research or demo software, not a certified medical device. It can help with monitoring and experimentation, but real hospital deployment still needs clinically labeled datasets, validation, and safety review.
 
-## Setup
+## Quick start
+
+Open a terminal inside this project folder first.
+
+### Install dependencies
+
+Windows:
 
 ```powershell
 py -3 -m pip install -r requirements.txt
 ```
 
-If `streamlit` is not on your PATH, run it like this:
+macOS or Linux:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+If `python3` is not available, use:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### Run the live camera monitor
+
+Windows:
+
+```powershell
+py -3 pain_main.py --config configs\default_config.json live
+```
+
+macOS or Linux:
+
+```bash
+python3 pain_main.py --config configs/default_config.json live
+```
+
+If you already trained a model and want to use it:
+
+Windows:
+
+```powershell
+py -3 pain_main.py --config configs\default_config.json live --model artifacts\pain_model.json
+```
+
+macOS or Linux:
+
+```bash
+python3 pain_main.py --config configs/default_config.json live --model artifacts/pain_model.json
+```
+
+### Run the Streamlit dashboard
+
+Windows:
 
 ```powershell
 py -3 -m streamlit run streamlit_pain_app.py
+```
+
+macOS or Linux:
+
+```bash
+python3 -m streamlit run streamlit_pain_app.py
+```
+
+If `python3 -m streamlit` does not work on your laptop, try:
+
+```bash
+python -m streamlit run streamlit_pain_app.py
 ```
 
 ## Main workflow
@@ -30,33 +92,61 @@ py -3 -m streamlit run streamlit_pain_app.py
 
 Merge one or more labeled CSV files and expand them with controlled synthetic augmentation:
 
+Windows:
+
 ```powershell
 py -3 pain_main.py prepare-dataset --csv sample_data\pain_labels\pain_labeled_template.csv --out-csv artifacts\prepared_training.csv --augment-factor 20
+```
+
+macOS or Linux:
+
+```bash
+python3 pain_main.py prepare-dataset --csv sample_data/pain_labels/pain_labeled_template.csv --out-csv artifacts/prepared_training.csv --augment-factor 20
 ```
 
 You can pass multiple CSV files after `--csv`.
 
 ### 2. Train the multimodal pain model
 
+Windows:
+
 ```powershell
 py -3 pain_main.py train --csv artifacts\prepared_training.csv --model-out artifacts\pain_model.json --metrics-out artifacts\pain_training_metrics.json
 ```
 
+macOS or Linux:
+
+```bash
+python3 pain_main.py train --csv artifacts/prepared_training.csv --model-out artifacts/pain_model.json --metrics-out artifacts/pain_training_metrics.json
+```
+
 ### 3. Evaluate the model
+
+Windows:
 
 ```powershell
 py -3 pain_main.py evaluate --model artifacts\pain_model.json --csv artifacts\prepared_training.csv
+```
+
+macOS or Linux:
+
+```bash
+python3 pain_main.py evaluate --model artifacts/pain_model.json --csv artifacts/prepared_training.csv
 ```
 
 ### 4. Extract multimodal features from a video
 
 Pain-only extraction:
 
+Windows:
+
 ```powershell
 py -3 pain_main.py extract-features --video sample_data\sample_face_video.mp4 --out-csv artifacts\video_features.csv --fixed-label 6.0
 ```
 
 Pain + wheeze extraction with aligned WAV audio:
+
+Windows:
 
 ```powershell
 py -3 pain_main.py extract-features --video sample_data\sample_face_video.mp4 --audio sample_data\respiratory_audio.wav --out-csv artifacts\video_features_with_audio.csv --fixed-label 6.0 --fixed-wheeze-label 0.7
@@ -67,19 +157,13 @@ py -3 pain_main.py extract-features --video sample_data\sample_face_video.mp4 --
 Camera with automatic microphone wheeze input when available:
 
 ```powershell
-py -3 pain_main.py --config configs\default_config.json live --model artifacts\pain_model.json
+py -3 pain_main.py --config configs\default_config.json live
 ```
 
 Video plus WAV audio:
 
 ```powershell
-py -3 pain_main.py --config configs\default_config.json live --model artifacts\pain_model.json --video sample_data\sample_face_video.mp4 --audio sample_data\respiratory_audio.wav
-```
-
-### 6. Open the dashboard
-
-```powershell
-py -3 -m streamlit run streamlit_pain_app.py
+py -3 pain_main.py --config configs\default_config.json live --video sample_data\sample_face_video.mp4 --audio sample_data\respiratory_audio.wav
 ```
 
 ## Camera-side improvements in this version
@@ -88,8 +172,10 @@ py -3 -m streamlit run streamlit_pain_app.py
 - Pain and wheeze values are now tuned with stronger display stabilization.
 - When the face is mostly still, the values move slowly to reduce random variation.
 - When you make a real expression change, the values react faster.
+- The camera now shows clear labels: `Pain Detected` or `No Pain`.
+- The camera also shows clear wheeze labels: `Wheezing Detected` or `No Wheezing`.
 
-These controls are configured in [default_config.json](C:\Users\elaiy\OneDrive\Documents\New project\configs\default_config.json):
+These controls are configured in `configs/default_config.json`:
 
 - `overlay_scale`
 - `overlay_anchor`
@@ -100,11 +186,11 @@ These controls are configured in [default_config.json](C:\Users\elaiy\OneDrive\D
 
 ## Parameter help
 
-For a simple explanation of every parameter and every JSON output, read [parameter_reference.md](C:\Users\elaiy\OneDrive\Documents\New project\docs\parameter_reference.md).
+For a simple explanation of every parameter and every JSON output, read `docs/parameter_reference.md`.
 
 ## Kaggle datasets
 
-I also added Kaggle-ready import support. The guide is here: [kaggle_integration.md](C:\Users\elaiy\OneDrive\Documents\New project\docs\kaggle_integration.md).
+I also added Kaggle-ready import support. The guide is in `docs/kaggle_integration.md`.
 
 New commands:
 

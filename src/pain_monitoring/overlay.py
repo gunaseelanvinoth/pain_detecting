@@ -25,6 +25,14 @@ def wheeze_level_from_probability(probability: float) -> str:
     return "None"
 
 
+def pain_detection_label(level: str) -> str:
+    return "Pain Detected" if level != "None" else "No Pain"
+
+
+def wheeze_detection_label(wheeze_level: str) -> str:
+    return "Wheezing Detected" if wheeze_level != "None" else "No Wheezing"
+
+
 def _panel_origin(frame, panel_width: int, anchor: str) -> tuple[int, int]:
     margin = 12
     x = margin if anchor == "top_left" else max(margin, frame.shape[1] - panel_width - margin)
@@ -48,10 +56,21 @@ def draw_overlay(
     elif level in {"Moderate", "Severe"}:
         color = (0, 80, 255)
 
+    pain_status = pain_detection_label(level)
+    wheeze_status = wheeze_detection_label(wheeze_level)
+
     if features.face_detected and features.face_box is not None:
         x, y, w, h = features.face_box
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(frame, f"Pain {score_0_10:0.1f}/10 ({level})", (x, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        cv2.putText(
+            frame,
+            f"{pain_status} | {score_0_10:0.1f}/10",
+            (x, max(20, y - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+        )
 
     font_scale = max(0.45, 0.62 * overlay_scale)
     small_scale = max(0.38, 0.54 * overlay_scale)
@@ -68,11 +87,19 @@ def draw_overlay(
     y = panel_y + 24
     cv2.putText(frame, "Pain + Wheeze Monitor", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
     y += line_gap
-    cv2.putText(frame, f"Pain: {score_0_10:0.2f}/10", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
+    cv2.putText(frame, f"Pain status: {pain_status}", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
     y += line_gap
-    cv2.putText(frame, f"Level: {level}", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
+    cv2.putText(frame, f"Pain score: {score_0_10:0.2f}/10 ({level})", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
     y += line_gap
-    cv2.putText(frame, f"Wheeze: {features.wheeze_probability:0.2f} ({wheeze_level})", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, (255, 230, 120), 2)
+    cv2.putText(
+        frame,
+        f"Wheeze: {wheeze_status} ({features.wheeze_probability:0.2f} | {wheeze_level})",
+        (text_x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        small_scale,
+        (255, 230, 120),
+        2,
+    )
     y += line_gap
     cv2.putText(frame, f"Face: {'TRACKED' if features.face_detected else 'NOT DETECTED'}", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, (220, 220, 220), 2)
     y += line_gap

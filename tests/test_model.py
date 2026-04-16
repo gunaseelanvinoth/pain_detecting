@@ -13,6 +13,7 @@ if str(SRC_ROOT) not in sys.path:
 from pain_monitoring.dataset import prepare_training_dataset
 from pain_monitoring.kaggle_import import import_kaggle_respiratory_dataset
 from pain_monitoring.model import PainLinearModel, train_linear_model_from_frame
+from pain_monitoring.overlay import pain_detection_label, wheeze_detection_label
 from pain_monitoring.types import FramePainFeatures
 
 
@@ -127,6 +128,12 @@ class ModelTests(unittest.TestCase):
         frame = pd.read_csv(output_csv)
         self.assertEqual(payload["rows"], 1)
         self.assertEqual(int(frame["wheeze_label_0_1"].iloc[0]), 1)
+
+    def test_overlay_detection_labels_are_clear(self):
+        self.assertEqual(pain_detection_label("None"), "No Pain")
+        self.assertEqual(pain_detection_label("Moderate"), "Pain Detected")
+        self.assertEqual(wheeze_detection_label("None"), "No Wheezing")
+        self.assertEqual(wheeze_detection_label("Low"), "Wheezing Detected")
 
 
 if __name__ == "__main__":

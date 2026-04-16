@@ -169,11 +169,12 @@ py -3 pain_main.py --config configs\default_config.json live --video sample_data
 ## Camera-side improvements in this version
 
 - The live panel is now smaller and moves to the side so it does not cover the full face.
-- Pain and wheeze values are now tuned with stronger display stabilization.
-- When the face is mostly still, the values move slowly to reduce random variation.
-- When you make a real expression change, the values react faster.
+- Pain and wheeze values are now tuned to react faster to smaller but real changes.
+- When the face is mostly still, the values stay calmer to reduce random variation.
+- When you make even a lighter facial-expression change, the pain score can rise sooner.
 - The camera now shows clear labels: `Pain Detected` or `No Pain`.
 - The camera also shows clear wheeze labels: `Wheezing Detected` or `No Wheezing`.
+- Optional Gmail notifications can send instant alerts and the patient session report.
 
 These controls are configured in `configs/default_config.json`:
 
@@ -183,6 +184,31 @@ These controls are configured in `configs/default_config.json`:
 - `pain_display_alpha_change`
 - `wheeze_display_alpha`
 - `expression_change_threshold`
+- `pain_expression_boost`
+- `micro_expression_trigger_threshold`
+- `wheeze_support_boost`
+- `wheeze_alert_threshold`
+
+## Gmail notifications
+
+To send alerts and the patient report to Gmail, set these values in `configs/default_config.json` or through environment variables:
+
+- `email_notifications_enabled`
+- `notification_email_to`
+- `notification_email_from`
+- `notification_email_password`
+- `smtp_host`
+- `smtp_port`
+
+You can also keep the password out of the JSON file and set:
+
+```powershell
+$env:PAIN_MONITOR_EMAIL_FROM = "yourgmail@gmail.com"
+$env:PAIN_MONITOR_EMAIL_TO = "receiver@gmail.com"
+$env:PAIN_MONITOR_EMAIL_PASSWORD = "your-gmail-app-password"
+```
+
+Gmail requires an App Password for SMTP access.
 
 ## Parameter help
 

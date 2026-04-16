@@ -13,7 +13,10 @@ if str(SRC_ROOT) not in sys.path:
 from pain_monitoring.dataset import prepare_training_dataset
 from pain_monitoring.kaggle_import import import_kaggle_respiratory_dataset
 from pain_monitoring.model import PainLinearModel, train_linear_model_from_frame
+from pain_monitoring.notifications import build_alert_body, build_session_report_body, email_notifications_ready
 from pain_monitoring.overlay import pain_detection_label, wheeze_detection_label
+from pain_monitoring.runner import _estimate_expression_pain_boost, _support_wheeze_probability
+from pain_monitoring.config import PainMonitoringConfig
 from pain_monitoring.types import FramePainFeatures
 
 
@@ -134,6 +137,60 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(pain_detection_label("Moderate"), "Pain Detected")
         self.assertEqual(wheeze_detection_label("None"), "No Wheezing")
         self.assertEqual(wheeze_detection_label("Low"), "Wheezing Detected")
+
+    def test_expression_boost_helps_small_real_changes(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.35,
+            0.32,
+            0.28,
+            1.0,
+            0.20,
+            mouth_opening=0.34,
+            lower_face_motion=0.31,
+            nasal_tension=0.22,
+        )
+        boost = _estimate_expression_pain_boost(features, 0.24, config)
+        self.assertGreater(boost, 0.0)
+
+    def test_wheeze_probability_gets_support_from_audio_features(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            respiratory_motion=0.55,
+            wheeze_tonality=0.60,
+            wheeze_band_energy=0.58,
+            wheeze_probability=0.28,
+        )
+        boosted = _support_wheeze_probability(features, 0.28, config)
+        self.assertGreater(boosted, 0.28)
+
+    def test_email_notifications_require_sender_receiver_and_password(self):
+        config = PainMonitoringConfig(
+            email_notifications_enabled=True,
+            notification_email_from="sender@gmail.com",
+            notification_email_to="receiver@gmail.com",
+            notification_email_password="app-password",
+        )
+        self.assertTrue(email_notifications_ready(config))
+
+    def test_notification_body_contains_patient_and_scores(self):
+        alert_body = build_alert_body(7, "pain", 5.2, 0.44, "Calibration ready")
+        report_body = build_session_report_body(
+            7,
+            {"rows": 12, "episodes_detected": 2, "total_pain_duration_s": 8.4, "max_pain_score": 6.5},
+        )
+        self.assertIn("Patient ID: 7", alert_body)
+        self.assertIn("Pain score: 5.20/10", alert_body)
+        self.assertIn("Episodes detected: 2", report_body)
 
 
 if __name__ == "__main__":

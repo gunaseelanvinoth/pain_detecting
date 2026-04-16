@@ -14,6 +14,14 @@ from pain_monitoring.episode_tracker import update_duration_state
 from pain_monitoring.io_utils import write_json
 from pain_monitoring.logger import PainLiveLogger
 from pain_monitoring.model import FEATURE_COLUMNS, TARGET_COLUMN, WHEEZE_TARGET_COLUMN, PainLinearModel, train_linear_model_from_frame
+from pain_monitoring.notifications import (
+    build_alert_body,
+    build_alert_subject,
+    build_session_report_body,
+    build_session_report_subject,
+    email_notifications_ready,
+    send_email_notification,
+)
 from pain_monitoring.reporting import summarize_session_csv
 from pain_monitoring.types import RuntimeState
 
@@ -28,6 +36,32 @@ def _expression_change_strength(raw_score: float, previous_raw_score: float, fea
     expressive_motion = 0.45 * features.lower_face_motion + 0.30 * features.motion_score + 0.25 * features.mouth_opening
     score_delta = abs(raw_score - previous_raw_score)
     return float(np.clip(expressive_motion + 0.12 * score_delta, 0.0, 1.0))
+
+
+def _estimate_expression_pain_boost(features, change_strength: float, config: PainMonitoringConfig) -> float:
+    facial_signal = (
+        0.24 * features.eye_closure
+        + 0.18 * features.brow_tension
+        + 0.17 * features.mouth_tension
+        + 0.16 * features.mouth_opening
+        + 0.15 * features.lower_face_motion
+        + 0.10 * features.nasal_tension
+    )
+    trigger = max(change_strength, facial_signal)
+    if trigger < config.micro_expression_trigger_threshold:
+        return 0.0
+    return float(np.clip((trigger - config.micro_expression_trigger_threshold) * config.pain_expression_boost, 0.0, 4.0))
+
+
+def _support_wheeze_probability(features, probability: float, config: PainMonitoringConfig) -> float:
+    support_signal = (
+        0.45 * probability
+        + 0.25 * features.respiratory_motion
+        + 0.20 * features.wheeze_band_energy
+        + 0.10 * features.wheeze_tonality
+    )
+    boosted = probability + config.wheeze_support_boost * support_signal
+    return float(np.clip(max(probability, boosted), 0.0, 1.0))
 
 
 def _predict_array(model: PainLinearModel, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -114,6 +148,8 @@ def run_live_monitor(
     calibration_done = cfg.calibration_seconds <= 0.0
     calibration_text = "Calibration skipped"
     latest_wheeze_probability = 0.0
+    last_pain_alert_time = -cfg.notification_cooldown_seconds
+    last_wheeze_alert_time = -cfg.notification_cooldown_seconds
 
     try:
         while True:
@@ -141,6 +177,7 @@ def run_live_monitor(
 
             raw_score = model.predict_score(features)
             latest_wheeze_probability = model.predict_wheeze(features)
+            latest_wheeze_probability = _support_wheeze_probability(features, latest_wheeze_probability, cfg)
             features.wheeze_probability = latest_wheeze_probability
 
             elapsed_calibration = now - start_wall
@@ -156,6 +193,7 @@ def run_live_monitor(
                 adjusted_score = np.clip(raw_score - runtime.baseline_score + cfg.neutral_anchor_score, 0.0, 10.0)
 
             change_strength = _expression_change_strength(adjusted_score, runtime.previous_raw_pain_score, features)
+            adjusted_score = np.clip(adjusted_score + _estimate_expression_pain_boost(features, change_strength, cfg), 0.0, 10.0)
             adaptive_alpha = cfg.pain_display_alpha_still
             if change_strength >= cfg.expression_change_threshold:
                 adaptive_alpha = cfg.pain_display_alpha_change
@@ -211,6 +249,22 @@ def run_live_monitor(
                     duration=duration,
                 )
 
+            if email_notifications_ready(cfg) and cfg.email_send_instant_alerts:
+                if duration.started_now and now - last_pain_alert_time >= cfg.notification_cooldown_seconds:
+                    send_email_notification(
+                        cfg,
+                        subject=build_alert_subject(cfg.patient_id, "pain"),
+                        body=build_alert_body(cfg.patient_id, "pain", score, latest_wheeze_probability, calibration_text),
+                    )
+                    last_pain_alert_time = now
+                if latest_wheeze_probability >= cfg.wheeze_alert_threshold and now - last_wheeze_alert_time >= cfg.notification_cooldown_seconds:
+                    send_email_notification(
+                        cfg,
+                        subject=build_alert_subject(cfg.patient_id, "wheeze"),
+                        body=build_alert_body(cfg.patient_id, "wheeze", score, latest_wheeze_probability, calibration_text),
+                    )
+                    last_wheeze_alert_time = now
+
             cv2.imshow("Patient Pain Monitor", frame)
             frame_idx += 1
             processed += 1
@@ -228,7 +282,17 @@ def run_live_monitor(
     if runtime.active_episode is not None:
         total_duration += max(0.0, time.time() - runtime.active_episode.start_time)
 
-    return {
+    report_summary = None
+    if logger is not None and cfg.email_send_session_report and email_notifications_ready(cfg):
+        report_summary = summarize_session_csv(logger.output_file)
+        send_email_notification(
+            cfg,
+            subject=build_session_report_subject(cfg.patient_id),
+            body=build_session_report_body(cfg.patient_id, report_summary),
+            attachments=[logger.output_file, logger.episode_file],
+        )
+
+    result = {
         "frames_processed": processed,
         "elapsed_seconds": elapsed,
         "fps": processed / elapsed,
@@ -239,6 +303,9 @@ def run_live_monitor(
         "calibration_done": calibration_done,
         "baseline_score": runtime.baseline_score,
     }
+    if report_summary is not None:
+        result["session_report"] = report_summary
+    return result
 
 
 def extract_features_from_video(

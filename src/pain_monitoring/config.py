@@ -11,10 +11,10 @@ class PainMonitoringConfig:
     frame_width: int = 960
     frame_height: int = 540
     min_face_area: int = 6000
-    pain_start_threshold: float = 4.5
-    pain_end_threshold: float = 3.0
-    start_hold_seconds: float = 1.4
-    end_hold_seconds: float = 1.8
+    pain_start_threshold: float = 3.0
+    pain_end_threshold: float = 2.0
+    start_hold_seconds: float = 0.6
+    end_hold_seconds: float = 1.0
     smoothing_alpha: float = 0.45
     prediction_smoothing_alpha: float = 0.35
     calibration_seconds: float = 6.0
@@ -31,10 +31,24 @@ class PainMonitoringConfig:
     training_ridge_alpha: float = 0.8
     overlay_scale: float = 0.85
     overlay_anchor: str = "top_right"
-    pain_display_alpha_still: float = 0.14
-    pain_display_alpha_change: float = 0.42
-    wheeze_display_alpha: float = 0.18
-    expression_change_threshold: float = 0.22
+    pain_display_alpha_still: float = 0.24
+    pain_display_alpha_change: float = 0.68
+    wheeze_display_alpha: float = 0.34
+    expression_change_threshold: float = 0.08
+    pain_expression_boost: float = 3.2
+    micro_expression_trigger_threshold: float = 0.18
+    wheeze_support_boost: float = 0.22
+    wheeze_alert_threshold: float = 0.30
+    notification_cooldown_seconds: float = 45.0
+    email_notifications_enabled: bool = False
+    notification_email_to: str = ""
+    notification_email_from: str = ""
+    notification_email_password: str = ""
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_use_tls: bool = True
+    email_send_instant_alerts: bool = True
+    email_send_session_report: bool = True
 
     @staticmethod
     def from_json(path: Path | None) -> "PainMonitoringConfig":
@@ -94,3 +108,15 @@ class PainMonitoringConfig:
             raise ValueError("wheeze_display_alpha must be between 0 and 1.")
         if not (0.0 <= self.expression_change_threshold <= 1.0):
             raise ValueError("expression_change_threshold must be between 0 and 1.")
+        if self.pain_expression_boost < 0.0:
+            raise ValueError("pain_expression_boost must be >= 0.")
+        if not (0.0 <= self.micro_expression_trigger_threshold <= 1.0):
+            raise ValueError("micro_expression_trigger_threshold must be between 0 and 1.")
+        if self.wheeze_support_boost < 0.0:
+            raise ValueError("wheeze_support_boost must be >= 0.")
+        if not (0.0 <= self.wheeze_alert_threshold <= 1.0):
+            raise ValueError("wheeze_alert_threshold must be between 0 and 1.")
+        if self.notification_cooldown_seconds < 0.0:
+            raise ValueError("notification_cooldown_seconds must be >= 0.")
+        if not (1 <= self.smtp_port <= 65535):
+            raise ValueError("smtp_port must be between 1 and 65535.")

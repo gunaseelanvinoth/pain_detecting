@@ -26,5 +26,9 @@
   "pain_display_alpha_still": 0.14,
   "pain_display_alpha_change": 0.42,
   "wheeze_display_alpha": 0.18,
-  "expression_change_threshold": 0.22
+  "expression_change_threshold": 0.22,
+  "pain_detection_score_threshold": 2.5,
+  "pain_feature_region_threshold": 0.32,
+  "pain_expression_threshold": 0.36,
+  "pain_min_active_regions": 2
 }

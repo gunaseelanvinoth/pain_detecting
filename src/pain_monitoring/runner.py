@@ -10,6 +10,7 @@ import pandas as pd
 from pain_monitoring.audio_features import FileAudioFeatureProvider, MicrophoneAudioFeatureProvider
 from pain_monitoring.config import PainMonitoringConfig
 from pain_monitoring.dataset import prepare_training_dataset
+from pain_monitoring.decision import pain_detected_from_face
 from pain_monitoring.episode_tracker import update_duration_state
 from pain_monitoring.io_utils import write_json
 from pain_monitoring.logger import PainLiveLogger
@@ -171,9 +172,11 @@ def run_live_monitor(
             runtime.previous_raw_pain_score = float(adjusted_score)
 
             score = runtime.smoothed_pain_score
-            level = level_from_score(score)
+            detected_for_overlay = pain_detected_from_face(features, score, cfg)
+            effective_score = score if detected_for_overlay else 0.0
+            level = level_from_score(effective_score)
             wheeze_level = wheeze_level_from_probability(latest_wheeze_probability)
-            duration = update_duration_state(runtime, score, now, cfg)
+            duration = update_duration_state(runtime, effective_score, now, cfg)
 
             if not calibration_done:
                 calibration_text = (
@@ -189,13 +192,14 @@ def run_live_monitor(
             draw_overlay(
                 frame,
                 features,
-                score,
+                effective_score,
                 level,
                 duration,
                 wheeze_level=wheeze_level,
                 calibration_text=calibration_text,
                 overlay_scale=cfg.overlay_scale,
                 overlay_anchor=cfg.overlay_anchor,
+                config=cfg,
             )
 
             if logger is not None and frame_idx % cfg.log_every_n_frames == 0:
@@ -205,7 +209,7 @@ def run_live_monitor(
                     frame_idx=frame_idx,
                     elapsed_seconds=elapsed,
                     patient_id=cfg.patient_id,
-                    score_0_10=score,
+                    score_0_10=effective_score,
                     level=level,
                     features=features,
                     duration=duration,

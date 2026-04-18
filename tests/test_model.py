@@ -11,6 +11,8 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from pain_monitoring.dataset import prepare_training_dataset
+from pain_monitoring.config import PainMonitoringConfig
+from pain_monitoring.decision import pain_detected_from_face, pain_status_text
 from pain_monitoring.kaggle_import import import_kaggle_respiratory_dataset
 from pain_monitoring.model import PainLinearModel, train_linear_model_from_frame
 from pain_monitoring.overlay import pain_detection_label, wheeze_detection_label
@@ -130,10 +132,48 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(int(frame["wheeze_label_0_1"].iloc[0]), 1)
 
     def test_overlay_detection_labels_are_clear(self):
-        self.assertEqual(pain_detection_label("None"), "No Pain")
-        self.assertEqual(pain_detection_label("Moderate"), "Pain Detected")
+        self.assertEqual(pain_detection_label("None"), "There is no pain detected")
+        self.assertEqual(pain_detection_label("Moderate"), "Pain is detected")
         self.assertEqual(wheeze_detection_label("None"), "No Wheezing")
         self.assertEqual(wheeze_detection_label("Low"), "Wheezing Detected")
+
+    def test_face_contrast_rule_detects_pain_when_eye_mouth_nose_change(self):
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.75,
+            0.42,
+            0.70,
+            1.0,
+            0.28,
+            eye_symmetry=0.35,
+            brow_energy=0.40,
+            mouth_opening=0.62,
+            lower_face_motion=0.38,
+            face_edge_density=0.36,
+            nasal_tension=0.58,
+        )
+        self.assertTrue(pain_detected_from_face(features, 5.1, PainMonitoringConfig()))
+        self.assertEqual(pain_status_text(True), "Pain is detected")
+
+    def test_face_contrast_rule_returns_no_pain_for_neutral_face(self):
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.05,
+            0.08,
+            0.10,
+            0.0,
+            0.04,
+            eye_symmetry=0.03,
+            brow_energy=0.05,
+            mouth_opening=0.08,
+            lower_face_motion=0.04,
+            face_edge_density=0.10,
+            nasal_tension=0.08,
+        )
+        self.assertFalse(pain_detected_from_face(features, 3.8, PainMonitoringConfig()))
+        self.assertEqual(pain_status_text(False), "There is no pain detected")
 
 
 if __name__ == "__main__":

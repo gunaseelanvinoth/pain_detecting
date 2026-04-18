@@ -2,6 +2,8 @@
 
 import cv2
 
+from pain_monitoring.config import PainMonitoringConfig
+from pain_monitoring.decision import pain_detected_from_face, pain_status_text
 from pain_monitoring.types import DurationStatus, FramePainFeatures
 
 
@@ -26,7 +28,7 @@ def wheeze_level_from_probability(probability: float) -> str:
 
 
 def pain_detection_label(level: str) -> str:
-    return "Pain Detected" if level != "None" else "No Pain"
+    return pain_status_text(level != "None")
 
 
 def wheeze_detection_label(wheeze_level: str) -> str:
@@ -49,6 +51,7 @@ def draw_overlay(
     calibration_text: str = "",
     overlay_scale: float = 0.85,
     overlay_anchor: str = "top_right",
+    config: PainMonitoringConfig | None = None,
 ) -> None:
     color = (0, 220, 0)
     if level == "Mild":
@@ -56,7 +59,8 @@ def draw_overlay(
     elif level in {"Moderate", "Severe"}:
         color = (0, 80, 255)
 
-    pain_status = pain_detection_label(level)
+    decision_config = config or PainMonitoringConfig()
+    pain_status = pain_status_text(pain_detected_from_face(features, score_0_10, decision_config))
     wheeze_status = wheeze_detection_label(wheeze_level)
 
     if features.face_detected and features.face_box is not None:

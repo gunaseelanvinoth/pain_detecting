@@ -35,6 +35,10 @@ class PainMonitoringConfig:
     pain_display_alpha_change: float = 0.42
     wheeze_display_alpha: float = 0.18
     expression_change_threshold: float = 0.22
+    pain_detection_score_threshold: float = 2.5
+    pain_feature_region_threshold: float = 0.32
+    pain_expression_threshold: float = 0.36
+    pain_min_active_regions: int = 2
 
     @staticmethod
     def from_json(path: Path | None) -> "PainMonitoringConfig":
@@ -94,3 +98,11 @@ class PainMonitoringConfig:
             raise ValueError("wheeze_display_alpha must be between 0 and 1.")
         if not (0.0 <= self.expression_change_threshold <= 1.0):
             raise ValueError("expression_change_threshold must be between 0 and 1.")
+        if not (0.0 <= self.pain_detection_score_threshold <= 10.0):
+            raise ValueError("pain_detection_score_threshold must be between 0 and 10.")
+        if not (0.0 <= self.pain_feature_region_threshold <= 1.0):
+            raise ValueError("pain_feature_region_threshold must be between 0 and 1.")
+        if not (0.0 <= self.pain_expression_threshold <= 1.0):
+            raise ValueError("pain_expression_threshold must be between 0 and 1.")
+        if self.pain_min_active_regions < 1:
+            raise ValueError("pain_min_active_regions must be >= 1.")

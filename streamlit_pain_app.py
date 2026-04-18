@@ -1,10 +1,19 @@
 ﻿from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
+SRC_ROOT = Path(__file__).resolve().parent / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from pain_monitoring.config import PainMonitoringConfig
+from pain_monitoring.decision import pain_detected_from_face, pain_status_text
+from pain_monitoring.types import FramePainFeatures
 
 DATA_DIR = Path(__file__).resolve().parent / "sample_data"
 
@@ -31,6 +40,13 @@ def load_session(path: str) -> pd.DataFrame:
         "wheeze_probability",
         "respiratory_motion",
         "pain_active",
+        "eye_symmetry",
+        "brow_energy",
+        "mouth_opening",
+        "lower_face_motion",
+        "face_edge_density",
+        "nasal_tension",
+        "face_detected",
     ]
     for column in numeric_columns:
         if column in frame.columns:
@@ -69,10 +85,33 @@ def summarize_episodes(data: pd.DataFrame) -> pd.DataFrame:
     return grouped[["episode_id", "start", "end", "duration_s", "max_score", "avg_score", "peak_wheeze"]]
 
 
-def classify_pain_status(score: float) -> str:
-    if score >= 2.5:
-        return "Pain Detected"
-    return "No Pain"
+def _frame_features_from_row(row: pd.Series) -> FramePainFeatures:
+    face_detected_value = row.get("face_detected", 0)
+    face_detected = bool(face_detected_value) if pd.notna(face_detected_value) else False
+    return FramePainFeatures(
+        face_detected=face_detected,
+        face_box=None,
+        eye_closure=float(row.get("eye_closure", 0.0) or 0.0),
+        brow_tension=float(row.get("brow_tension", 0.0) or 0.0),
+        mouth_tension=float(row.get("mouth_tension", 0.0) or 0.0),
+        smile_absence=float(row.get("smile_absence", 0.0) or 0.0),
+        motion_score=float(row.get("motion_score", 0.0) or 0.0),
+        eye_symmetry=float(row.get("eye_symmetry", 0.0) or 0.0),
+        brow_energy=float(row.get("brow_energy", 0.0) or 0.0),
+        mouth_opening=float(row.get("mouth_opening", 0.0) or 0.0),
+        lower_face_motion=float(row.get("lower_face_motion", 0.0) or 0.0),
+        face_edge_density=float(row.get("face_edge_density", 0.0) or 0.0),
+        nasal_tension=float(row.get("nasal_tension", 0.0) or 0.0),
+        respiratory_motion=float(row.get("respiratory_motion", 0.0) or 0.0),
+        wheeze_probability=float(row.get("wheeze_probability", 0.0) or 0.0),
+    )
+
+
+def classify_pain_status(score: float, row: pd.Series | None = None) -> str:
+    if row is None:
+        return pain_status_text(score >= 2.5)
+    config = PainMonitoringConfig()
+    return pain_status_text(pain_detected_from_face(_frame_features_from_row(row), score, config))
 
 
 def classify_wheeze_status(probability: float) -> str:
@@ -207,6 +246,7 @@ def render_overview(data: pd.DataFrame, selected_name: str, sessions_count: int)
         episode_count = 0
         latest_time_label = "Not available"
     else:
+        latest_row = data.iloc[-1]
         latest_score = float(data["pain_score_0_10"].dropna().iloc[-1]) if "pain_score_0_10" in data.columns and not data["pain_score_0_10"].dropna().empty else 0.0
         latest_wheeze = float(data["wheeze_probability"].dropna().iloc[-1]) if "wheeze_probability" in data.columns and not data["wheeze_probability"].dropna().empty else 0.0
         avg_score = float(data["pain_score_0_10"].mean()) if "pain_score_0_10" in data.columns else 0.0
@@ -219,6 +259,9 @@ def render_overview(data: pd.DataFrame, selected_name: str, sessions_count: int)
         episode_count = len(summarize_episodes(data))
         latest_time = data["timestamp"].dropna().iloc[-1] if "timestamp" in data.columns and not data["timestamp"].dropna().empty else None
         latest_time_label = latest_time.strftime("%Y-%m-%d %H:%M:%S") if latest_time is not None else "Not available"
+        latest_pain_status = classify_pain_status(latest_score, latest_row)
+    if data.empty:
+        latest_pain_status = classify_pain_status(0.0)
 
     st.markdown(
         f"""
@@ -245,7 +288,7 @@ def render_overview(data: pd.DataFrame, selected_name: str, sessions_count: int)
         f"""
         <div class="status-card status-pain">
             <h4>Current Pain Status</h4>
-            <h2>{classify_pain_status(latest_score)}</h2>
+            <h2>{latest_pain_status}</h2>
             <p>Latest score: {latest_score:.2f}/10</p>
             <p>Average score: {avg_score:.2f}/10</p>
         </div>

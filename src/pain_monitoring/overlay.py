@@ -33,6 +33,10 @@ def wheeze_detection_label(wheeze_level: str) -> str:
     return "Wheezing Detected" if wheeze_level != "None" else "No Wheezing"
 
 
+def eyebrow_detection_label(features: FramePainFeatures, confidence_threshold: float = 0.5) -> str:
+    return "Pain" if features.eyebrow_pain_confidence >= confidence_threshold else "No Pain"
+
+
 def _panel_origin(frame, panel_width: int, anchor: str) -> tuple[int, int]:
     margin = 12
     x = margin if anchor == "top_left" else max(margin, frame.shape[1] - panel_width - margin)
@@ -49,6 +53,8 @@ def draw_overlay(
     calibration_text: str = "",
     overlay_scale: float = 0.85,
     overlay_anchor: str = "top_right",
+    pain_display_enabled: bool = True,
+    eyebrow_confidence_threshold: float = 0.5,
 ) -> None:
     color = (0, 220, 0)
     if level == "Mild":
@@ -56,7 +62,7 @@ def draw_overlay(
     elif level in {"Moderate", "Severe"}:
         color = (0, 80, 255)
 
-    pain_status = pain_detection_label(level)
+    pain_status = pain_detection_label(level) if pain_display_enabled else "No Pain"
     wheeze_status = wheeze_detection_label(wheeze_level)
 
     if features.face_detected and features.face_box is not None:
@@ -76,7 +82,7 @@ def draw_overlay(
     small_scale = max(0.38, 0.54 * overlay_scale)
     line_gap = int(34 * overlay_scale)
     panel_width = int(300 * overlay_scale + 70)
-    panel_height = int(205 * overlay_scale + 40)
+    panel_height = int(235 * overlay_scale + 44)
     panel_x, panel_y = _panel_origin(frame, panel_width, overlay_anchor)
 
     panel = frame.copy()
@@ -90,6 +96,17 @@ def draw_overlay(
     cv2.putText(frame, f"Pain status: {pain_status}", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
     y += line_gap
     cv2.putText(frame, f"Pain score: {score_0_10:0.2f}/10 ({level})", (text_x, y), cv2.FONT_HERSHEY_SIMPLEX, small_scale, color, 2)
+    y += line_gap
+    eyebrow_status = eyebrow_detection_label(features, eyebrow_confidence_threshold) if pain_display_enabled else "No Pain"
+    cv2.putText(
+        frame,
+        f"Eyebrow: {eyebrow_status} ({features.eyebrow_pain_confidence:0.2f})",
+        (text_x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        small_scale,
+        color if eyebrow_status == "Pain" else (190, 235, 190),
+        2,
+    )
     y += line_gap
     cv2.putText(
         frame,

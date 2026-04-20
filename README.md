@@ -5,6 +5,7 @@ This project detects visible pain-related facial changes and also estimates whee
 It includes:
 
 - More facial-expression features for pain estimation
+- Landmark-based eyebrow contraction detection using MediaPipe FaceMesh when available
 - Optional wheeze analysis from WAV audio or live microphone input
 - Dataset preparation and synthetic expansion for larger training sets
 - Multimodal model training and evaluation
@@ -65,6 +66,8 @@ macOS or Linux:
 ```bash
 python3 pain_main.py --config configs/default_config.json live --model artifacts/pain_model.json
 ```
+
+Keep your face relaxed and normal during the first calibration seconds. The live monitor now learns your personal neutral eyebrow, mouth, nose, and model-score baseline, then suppresses false `Pain Detected` output when the current face still matches that baseline.
 
 ### Run the Streamlit dashboard
 
@@ -170,6 +173,13 @@ py -3 pain_main.py --config configs\default_config.json live --video sample_data
 
 - The live panel is now smaller and moves to the side so it does not cover the full face.
 - Pain and wheeze values are now tuned to react faster to smaller but real changes.
+- Eyebrow position, eyebrow motion, nose contrast, and mouth micro-motion are now measured separately for more attentive pain detection.
+- Eyebrow contraction is measured from facial landmarks using both inner-eyebrow distance and inner-brow angle/lowering. If the brows pull together strongly enough, the overlay shows `Eyebrow: Pain` with a confidence score.
+- During calibration the overlay keeps pain display suppressed, then uses your relaxed eyebrow distance as the normal baseline to avoid false pain output.
+- If the same pain-like face is held for several seconds or longer, the monitor now keeps building sustained evidence instead of treating it like a one-frame change.
+- A neutral-face guard now keeps calm normal faces below the pain-detected range after calibration.
+- Trained-model output is corrected against your calibrated neutral face, so a model that scores your normal face too high is pulled back to `No Pain`.
+- Wheeze detection now also uses sustained audio evidence, so repeated/held wheeze-like breathing can raise confidence more reliably.
 - When the face is mostly still, the values stay calmer to reduce random variation.
 - When you make even a lighter facial-expression change, the pain score can rise sooner.
 - The camera now shows clear labels: `Pain Detected` or `No Pain`.
@@ -186,7 +196,23 @@ These controls are configured in `configs/default_config.json`:
 - `expression_change_threshold`
 - `pain_expression_boost`
 - `micro_expression_trigger_threshold`
+- `enable_eyebrow_landmarks`
+- `eyebrow_distance_pain_threshold`
+- `eyebrow_contraction_drop_threshold`
+- `eyebrow_angle_pain_threshold`
+- `eyebrow_pain_confidence_threshold`
+- `eyebrow_pain_score_boost`
+- `brow_edge_pain_boost`
+- `sustained_pain_signal_threshold`
+- `sustained_pain_boost`
+- `sustained_pain_seconds_to_full_boost`
+- `neutral_expression_signal_threshold`
+- `neutral_motion_threshold`
+- `neutral_face_score_cap`
 - `wheeze_support_boost`
+- `sustained_wheeze_signal_threshold`
+- `sustained_wheeze_boost`
+- `sustained_wheeze_seconds_to_full_boost`
 - `wheeze_alert_threshold`
 
 ## Gmail notifications
@@ -200,6 +226,11 @@ To send alerts and the patient report to Gmail, set these values in `configs/def
 - `smtp_host`
 - `smtp_port`
 
+This project is configured to notify:
+
+- `gunaseelanv58@gmail.com`
+- `kavipreethirathna@gmail.com`
+
 You can also keep the password out of the JSON file and set:
 
 ```powershell
@@ -209,6 +240,10 @@ $env:PAIN_MONITOR_EMAIL_PASSWORD = "your-gmail-app-password"
 ```
 
 Gmail requires an App Password for SMTP access.
+
+## Command guide
+
+If you want a simple explanation of why each command line is used and what output it gives, read `docs/command_reference.md`.
 
 ## Parameter help
 
@@ -263,6 +298,17 @@ Recommended label columns:
 - `wheeze_label_0_1`
 
 The model will automatically use richer face features and audio-derived wheeze features when those columns are present.
+
+New camera feature columns include:
+
+- `brow_position`
+- `brow_motion`
+- `eyebrow_distance_ratio`
+- `eyebrow_angle_score`
+- `eyebrow_contraction`
+- `eyebrow_pain_confidence`
+- `mouth_micro_motion`
+- `nose_contrast`
 
 ## Outputs
 

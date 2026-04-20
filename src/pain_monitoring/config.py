@@ -37,12 +37,33 @@ class PainMonitoringConfig:
     expression_change_threshold: float = 0.08
     pain_expression_boost: float = 3.2
     micro_expression_trigger_threshold: float = 0.18
+    enable_eyebrow_landmarks: bool = True
+    eyebrow_distance_pain_threshold: float = 0.115
+    eyebrow_contraction_drop_threshold: float = 0.12
+    eyebrow_angle_pain_threshold: float = 0.08
+    eyebrow_pain_confidence_threshold: float = 0.70
+    eyebrow_pain_score_boost: float = 2.8
+    brow_edge_pain_boost: float = 1.2
+    calm_brow_threshold: float = 0.24
+    calm_edge_threshold: float = 0.20
     wheeze_support_boost: float = 0.22
+    sustained_pain_signal_threshold: float = 0.30
+    sustained_pain_boost: float = 1.4
+    sustained_pain_seconds_to_full_boost: float = 8.0
+    neutral_expression_signal_threshold: float = 0.24
+    neutral_motion_threshold: float = 0.10
+    neutral_face_score_cap: float = 1.8
+    neutral_relative_evidence_margin: float = 0.12
+    minimum_pain_regions_required: int = 2
+    single_region_score_cap: float = 2.2
+    sustained_wheeze_signal_threshold: float = 0.32
+    sustained_wheeze_boost: float = 0.18
+    sustained_wheeze_seconds_to_full_boost: float = 5.0
     wheeze_alert_threshold: float = 0.30
     notification_cooldown_seconds: float = 45.0
     email_notifications_enabled: bool = False
-    notification_email_to: str = ""
-    notification_email_from: str = ""
+    notification_email_to: str = "gunaseelanv58@gmail.com, kavipreethirathna@gmail.com"
+    notification_email_from: str = "gunaseelanv58@gmail.com"
     notification_email_password: str = ""
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
@@ -112,8 +133,48 @@ class PainMonitoringConfig:
             raise ValueError("pain_expression_boost must be >= 0.")
         if not (0.0 <= self.micro_expression_trigger_threshold <= 1.0):
             raise ValueError("micro_expression_trigger_threshold must be between 0 and 1.")
+        if not (0.0 <= self.eyebrow_distance_pain_threshold <= 1.0):
+            raise ValueError("eyebrow_distance_pain_threshold must be between 0 and 1.")
+        if not (0.0 < self.eyebrow_contraction_drop_threshold <= 1.0):
+            raise ValueError("eyebrow_contraction_drop_threshold must be between 0 and 1.")
+        if not (0.0 <= self.eyebrow_angle_pain_threshold <= 1.0):
+            raise ValueError("eyebrow_angle_pain_threshold must be between 0 and 1.")
+        if not (0.0 <= self.eyebrow_pain_confidence_threshold <= 1.0):
+            raise ValueError("eyebrow_pain_confidence_threshold must be between 0 and 1.")
+        if self.eyebrow_pain_score_boost < 0.0:
+            raise ValueError("eyebrow_pain_score_boost must be >= 0.")
+        if self.brow_edge_pain_boost < 0.0:
+            raise ValueError("brow_edge_pain_boost must be >= 0.")
+        if not (0.0 <= self.calm_brow_threshold <= 1.0):
+            raise ValueError("calm_brow_threshold must be between 0 and 1.")
+        if not (0.0 <= self.calm_edge_threshold <= 1.0):
+            raise ValueError("calm_edge_threshold must be between 0 and 1.")
         if self.wheeze_support_boost < 0.0:
             raise ValueError("wheeze_support_boost must be >= 0.")
+        if not (0.0 <= self.sustained_pain_signal_threshold <= 1.0):
+            raise ValueError("sustained_pain_signal_threshold must be between 0 and 1.")
+        if self.sustained_pain_boost < 0.0:
+            raise ValueError("sustained_pain_boost must be >= 0.")
+        if self.sustained_pain_seconds_to_full_boost <= 0.0:
+            raise ValueError("sustained_pain_seconds_to_full_boost must be positive.")
+        if not (0.0 <= self.neutral_expression_signal_threshold <= 1.0):
+            raise ValueError("neutral_expression_signal_threshold must be between 0 and 1.")
+        if not (0.0 <= self.neutral_motion_threshold <= 1.0):
+            raise ValueError("neutral_motion_threshold must be between 0 and 1.")
+        if not (0.0 <= self.neutral_face_score_cap <= 10.0):
+            raise ValueError("neutral_face_score_cap must be between 0 and 10.")
+        if not (0.0 <= self.neutral_relative_evidence_margin <= 1.0):
+            raise ValueError("neutral_relative_evidence_margin must be between 0 and 1.")
+        if self.minimum_pain_regions_required < 1:
+            raise ValueError("minimum_pain_regions_required must be >= 1.")
+        if not (0.0 <= self.single_region_score_cap <= 10.0):
+            raise ValueError("single_region_score_cap must be between 0 and 10.")
+        if not (0.0 <= self.sustained_wheeze_signal_threshold <= 1.0):
+            raise ValueError("sustained_wheeze_signal_threshold must be between 0 and 1.")
+        if self.sustained_wheeze_boost < 0.0:
+            raise ValueError("sustained_wheeze_boost must be >= 0.")
+        if self.sustained_wheeze_seconds_to_full_boost <= 0.0:
+            raise ValueError("sustained_wheeze_seconds_to_full_boost must be positive.")
         if not (0.0 <= self.wheeze_alert_threshold <= 1.0):
             raise ValueError("wheeze_alert_threshold must be between 0 and 1.")
         if self.notification_cooldown_seconds < 0.0:

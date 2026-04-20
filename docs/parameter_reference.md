@@ -36,6 +36,26 @@ The project uses a JSON config file because it is an easy way to change behavior
 - `pain_display_alpha_change`: Faster update speed when expression changes clearly.
 - `wheeze_display_alpha`: Smoothing strength for wheeze display values.
 - `expression_change_threshold`: Minimum detected expression change before the UI updates faster.
+- `pain_expression_boost`: Extra pain score added when real micro-expression changes are detected.
+- `micro_expression_trigger_threshold`: Minimum expression-change signal required before the extra pain boost is applied.
+- `enable_eyebrow_landmarks`: Turns MediaPipe FaceMesh eyebrow landmark detection on or off.
+- `eyebrow_distance_pain_threshold`: Inner-eyebrow distance ratio below this value is treated as eyebrow contraction pain when no personal baseline is available.
+- `eyebrow_contraction_drop_threshold`: Relative drop from the calibrated neutral eyebrow distance needed for full eyebrow-contraction confidence.
+- `eyebrow_angle_pain_threshold`: Inner-brow downward angle/lowering needed for full eyebrow angle confidence. This helps catch furrowed brows, not only brows that move closer together.
+- `eyebrow_pain_confidence_threshold`: Minimum eyebrow confidence required before eyebrow contraction can affect the final pain decision.
+- `eyebrow_pain_score_boost`: Extra pain score added when eyebrow landmarks show contracted brows.
+- `brow_edge_pain_boost`: Extra eyebrow and face-edge emphasis used to improve pain sensitivity from brow tightening and edge changes.
+- `calm_brow_threshold`: Brow signal level treated as calm so eyebrow boosting does not fire unnecessarily.
+- `calm_edge_threshold`: Face-edge and nose-contrast level treated as calm so edge boosting does not fire unnecessarily.
+- `sustained_pain_signal_threshold`: Minimum steady eyebrow, mouth, and nose evidence needed before held-expression confidence starts building.
+- `sustained_pain_boost`: Maximum extra score added when a pain-like expression is held long enough.
+- `sustained_pain_seconds_to_full_boost`: Number of seconds a pain-like expression should be held before the full sustained-expression boost is available.
+- `neutral_expression_signal_threshold`: Maximum calm-face evidence allowed before the normal-face guard stops applying.
+- `neutral_motion_threshold`: Maximum movement allowed for a face to be treated as normal/calm.
+- `neutral_face_score_cap`: Highest pain score allowed when the face looks calm and neutral.
+- `neutral_relative_evidence_margin`: Extra facial evidence above the calibrated neutral face required before calm-face suppression stops applying.
+- `minimum_pain_regions_required`: Minimum number of active facial regions required before the score can rise freely into pain-detected range.
+- `single_region_score_cap`: Highest score allowed when only one region, such as eyebrow-only activity, is active.
 
 ### Calibration parameters
 
@@ -48,6 +68,7 @@ The project uses a JSON config file because it is an easy way to change behavior
 - `save_live_data`: If `true`, session CSV logs are saved.
 - `log_every_n_frames`: Writes one log row every N frames.
 - `patient_id`: Patient identifier stored in logs.
+- `notification_cooldown_seconds`: Minimum wait time between repeated email alerts.
 
 ### Audio and wheeze parameters
 
@@ -55,6 +76,11 @@ The project uses a JSON config file because it is an easy way to change behavior
 - `audio_window_seconds`: Audio window size used for wheeze feature extraction.
 - `audio_sample_rate`: Microphone sample rate for live audio capture.
 - `audio_channels`: Number of microphone channels.
+- `wheeze_support_boost`: Extra support added when respiratory motion and wheeze-band audio agree with the model.
+- `sustained_wheeze_signal_threshold`: Minimum steady wheeze evidence needed before held/repeated wheeze confidence starts building.
+- `sustained_wheeze_boost`: Maximum extra wheeze probability added when wheeze evidence is sustained.
+- `sustained_wheeze_seconds_to_full_boost`: Number of seconds wheeze evidence should persist before the full sustained-wheeze boost is available.
+- `wheeze_alert_threshold`: Wheeze probability level that can trigger a live wheeze alert.
 
 ### Training parameters
 
@@ -65,6 +91,18 @@ The project uses a JSON config file because it is an easy way to change behavior
 
 - `overlay_scale`: Makes the camera information panel smaller or larger.
 - `overlay_anchor`: Places the panel in the `top_left` or `top_right` corner.
+
+### Email notification parameters
+
+- `email_notifications_enabled`: Turns patient email notifications on or off.
+- `notification_email_to`: One or more receiver email IDs separated by commas.
+- `notification_email_from`: Gmail sender account used for SMTP delivery.
+- `notification_email_password`: Gmail App Password for the sender account.
+- `smtp_host`: SMTP server host. Gmail uses `smtp.gmail.com`.
+- `smtp_port`: SMTP server port. Gmail TLS uses `587`.
+- `smtp_use_tls`: Uses TLS encryption when `true`.
+- `email_send_instant_alerts`: Sends live pain and wheeze alerts while monitoring.
+- `email_send_session_report`: Sends the patient report and CSV files when the session ends.
 
 ## Why command output is JSON
 
@@ -99,6 +137,17 @@ Example meanings:
 - `wheeze_mae`: Mean absolute error for wheeze prediction if wheeze labels exist.
 - `feature_columns`: Feature names used by the model.
 - `design_feature_count`: Number of expanded model inputs after polynomial and interaction features.
+
+Important face feature columns:
+
+- `brow_position`: Tracks where strong eyebrow-region edges sit vertically, so lowered or tightened brows can influence the score.
+- `brow_motion`: Tracks frame-to-frame eyebrow-region movement for small eyebrow position changes.
+- `eyebrow_distance_ratio`: Landmark-based normalized gap between the inner eyebrows.
+- `eyebrow_angle_score`: Landmark-based score for inner eyebrows lowering relative to the outer eyebrows.
+- `eyebrow_contraction`: Landmark-based eyebrow contraction strength.
+- `eyebrow_pain_confidence`: Confidence that contracted eyebrows indicate `Pain`.
+- `mouth_micro_motion`: Tracks small mouth-region movement separately from larger lower-face motion.
+- `nose_contrast`: Tracks nose-region contrast and edges to make nose tension/contrast changes more reliable.
 
 ### `evaluate`
 
@@ -145,3 +194,36 @@ If pain episodes end too slowly:
 
 - Increase `pain_end_threshold`
 - Lower `end_hold_seconds`
+
+## Why each command line is used
+
+### `python pain_main.py live`
+
+- Use this when you want real-time camera monitoring.
+- It opens the webcam, extracts face and audio features, predicts pain and wheeze, shows the overlay, writes session logs, and can send patient email notifications.
+- Output: JSON with runtime details such as processed frames, total pain duration, log file path, and session report summary if email reporting is enabled.
+
+### `python pain_main.py extract-features --video ... --out-csv ...`
+
+- Use this when you want to convert a recorded video into a labeled feature CSV for training or analysis.
+- Output: JSON with the video path, output CSV path, row count, and label attachment status.
+
+### `python pain_main.py prepare-dataset --csv ... --out-csv ...`
+
+- Use this when you want to merge CSV files and increase the training rows using synthetic augmentation.
+- Output: JSON with source files, base rows, prepared rows, and augmentation details.
+
+### `python pain_main.py train --csv ... --model-out ...`
+
+- Use this when you want to train or retrain the pain and wheeze model.
+- Output: JSON with the saved model path and accuracy-style metrics such as `mae`, `rmse`, and `wheeze_mae`.
+
+### `python pain_main.py evaluate --model ... --csv ...`
+
+- Use this when you want to check how well a trained model performs on labeled data.
+- Output: JSON with evaluation row count and error metrics such as `mae`, `rmse`, `within_1_point_percent`, and `within_2_points_percent`.
+
+### `python pain_main.py summarize-session --csv ...`
+
+- Use this when you want a short report from one patient session log.
+- Output: JSON with rows logged, episodes detected, total pain duration, mean pain score, and max wheeze probability.

@@ -29,17 +29,25 @@ def _resolve_recipient(config: PainMonitoringConfig) -> str:
     )
 
 
+def _parse_recipients(raw_value: str) -> list[str]:
+    return [item.strip() for item in raw_value.replace(";", ",").split(",") if item.strip()]
+
+
+def resolve_recipient_list(config: PainMonitoringConfig) -> list[str]:
+    return _parse_recipients(_resolve_recipient(config))
+
+
 def email_notifications_ready(config: PainMonitoringConfig) -> bool:
     if not config.email_notifications_enabled:
         return False
-    return bool(_resolve_sender(config) and _resolve_password(config) and _resolve_recipient(config))
+    return bool(_resolve_sender(config) and _resolve_password(config) and resolve_recipient_list(config))
 
 
-def _build_message(subject: str, body: str, sender: str, recipient: str, attachments: list[Path] | None = None) -> EmailMessage:
+def _build_message(subject: str, body: str, sender: str, recipients: list[str], attachments: list[Path] | None = None) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = sender
-    message["To"] = recipient
+    message["To"] = ", ".join(recipients)
     message.set_content(body)
 
     for attachment in attachments or []:
@@ -61,8 +69,8 @@ def send_email_notification(
 
     sender = _resolve_sender(config)
     password = _resolve_password(config)
-    recipient = _resolve_recipient(config)
-    message = _build_message(subject, body, sender, recipient, attachments)
+    recipients = resolve_recipient_list(config)
+    message = _build_message(subject, body, sender, recipients, attachments)
 
     try:
         if config.smtp_use_tls:
@@ -76,7 +84,7 @@ def send_email_notification(
                 server.send_message(message)
     except Exception as exc:
         return False, str(exc)
-    return True, recipient
+    return True, ", ".join(recipients)
 
 
 def build_alert_subject(patient_id: int, alert_type: str) -> str:

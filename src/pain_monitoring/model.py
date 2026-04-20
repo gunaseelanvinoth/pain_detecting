@@ -13,6 +13,22 @@ def _clamp(value: float, low: float, high: float) -> float:
     return float(max(low, min(high, value)))
 
 
+def _brow_edge_pain_signal(features: FramePainFeatures) -> float:
+    return (
+        1.8 * features.brow_tension
+        + 1.5 * features.brow_energy
+        + 1.2 * features.brow_motion
+        + 2.0 * features.eyebrow_contraction
+        + 1.2 * features.eyebrow_angle_score
+        + 1.6 * features.eyebrow_pain_confidence
+        + 0.6 * features.brow_position
+        + 1.1 * features.face_edge_density
+        + 0.8 * features.eye_symmetry
+        + 0.5 * features.nasal_tension
+        + 0.5 * features.nose_contrast
+    )
+
+
 FACE_FEATURE_COLUMNS = [
     "eye_closure",
     "brow_tension",
@@ -21,10 +37,17 @@ FACE_FEATURE_COLUMNS = [
     "motion_score",
     "eye_symmetry",
     "brow_energy",
+    "brow_position",
+    "brow_motion",
+    "eyebrow_distance_ratio",
+    "eyebrow_contraction",
+    "eyebrow_pain_confidence",
     "mouth_opening",
+    "mouth_micro_motion",
     "lower_face_motion",
     "face_edge_density",
     "nasal_tension",
+    "nose_contrast",
 ]
 
 RESPIRATORY_FEATURE_COLUMNS = [
@@ -59,15 +82,15 @@ def _build_design_matrix(x: np.ndarray) -> np.ndarray:
             x[:, 0] * x[:, 1],
             x[:, 1] * x[:, 2],
             x[:, 2] * x[:, 4],
-            x[:, 0] * x[:, 7],
-            x[:, 3] * x[:, 7],
-            x[:, 4] * x[:, 8],
-            x[:, 5] * x[:, 9],
-            x[:, 2] * x[:, 10],
-            x[:, 11] * x[:, 12],
-            x[:, 12] * x[:, 13],
-            x[:, 11] * x[:, 13],
-            x[:, 10] * x[:, 11],
+            x[:, 0] * x[:, 12],
+            x[:, 3] * x[:, 12],
+            x[:, 4] * x[:, 14],
+            x[:, 5] * x[:, 15],
+            x[:, 2] * x[:, 16],
+            x[:, 18] * x[:, 19],
+            x[:, 19] * x[:, 20],
+            x[:, 18] * x[:, 20],
+            x[:, 17] * x[:, 18],
         ]
     )
     return np.concatenate([x, squares, interactions], axis=1)
@@ -119,14 +142,26 @@ class PainLinearModel:
         else:
             raw = (
                 3.3 * features.eye_closure
-                + 2.8 * features.brow_tension
+                + 2.0 * features.brow_tension
+                + 1.6 * features.brow_energy
+                + 0.7 * features.brow_position
+                + 1.2 * features.brow_motion
+                + 2.4 * features.eyebrow_contraction
+                + 1.3 * features.eyebrow_angle_score
+                + 1.8 * features.eyebrow_pain_confidence
                 + 2.4 * features.mouth_tension
                 + 1.4 * features.motion_score
                 + 1.0 * features.mouth_opening
+                + 1.4 * features.mouth_micro_motion
                 + 0.8 * features.lower_face_motion
+                + 0.8 * features.face_edge_density
+                + 0.4 * features.eye_symmetry
+                + 0.6 * features.nasal_tension
+                + 0.9 * features.nose_contrast
                 + 0.6 * features.respiratory_motion
                 + 1.2 * features.wheeze_probability
             )
+            raw += 0.10 * _brow_edge_pain_signal(features)
         return _clamp(raw, 0.0, 10.0)
 
     def predict_wheeze(self, features: FramePainFeatures) -> float:
@@ -159,9 +194,12 @@ class PainLinearModel:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if "pain_blob" not in payload:
             return PainLinearModel()
+        feature_columns = list(payload.get("feature_columns", FEATURE_COLUMNS))
+        if feature_columns != FEATURE_COLUMNS:
+            return PainLinearModel()
         return PainLinearModel(
             version=str(payload.get("version", "multimodal-ridge-v2")),
-            feature_columns=list(payload.get("feature_columns", FEATURE_COLUMNS)),
+            feature_columns=feature_columns,
             design_feature_count=int(payload.get("design_feature_count", 0)),
             pain_blob=list(payload.get("pain_blob", [])),
             wheeze_blob=list(payload.get("wheeze_blob", [])),

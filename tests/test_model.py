@@ -12,12 +12,47 @@ if str(SRC_ROOT) not in sys.path:
 
 from pain_monitoring.dataset import prepare_training_dataset
 from pain_monitoring.kaggle_import import import_kaggle_respiratory_dataset
-from pain_monitoring.model import PainLinearModel, train_linear_model_from_frame
-from pain_monitoring.notifications import build_alert_body, build_session_report_body, email_notifications_ready
+from pain_monitoring.model import PainLinearModel, _brow_edge_pain_signal, train_linear_model_from_frame
+from pain_monitoring.notifications import build_alert_body, build_session_report_body, email_notifications_ready, resolve_recipient_list
 from pain_monitoring.overlay import pain_detection_label, wheeze_detection_label
-from pain_monitoring.runner import _estimate_expression_pain_boost, _support_wheeze_probability
+from pain_monitoring.runner import (
+    _estimate_brow_edge_boost,
+    _estimate_expression_pain_boost,
+    _estimate_sustained_pain_boost,
+    _estimate_sustained_wheeze_boost,
+    _apply_neutral_face_guard,
+    _is_confirmed_eyebrow_pain,
+    _is_neutral_expression,
+    _pain_region_count,
+    _relative_facial_pain_evidence,
+    _support_wheeze_probability,
+    _update_evidence_seconds,
+    _wheeze_evidence,
+)
 from pain_monitoring.config import PainMonitoringConfig
+from pain_monitoring.features import eyebrow_contraction_from_landmarks
 from pain_monitoring.types import FramePainFeatures
+
+
+class FakeLandmark:
+    def __init__(self, x: float, y: float = 0.5) -> None:
+        self.x = x
+        self.y = y
+
+
+def _fake_face_landmarks(right_brow_x: float, left_brow_x: float):
+    landmarks = [FakeLandmark(0.5, 0.5) for _ in range(468)]
+    for index in (107, 66, 105):
+        landmarks[index] = FakeLandmark(right_brow_x, 0.35)
+    for index in (336, 296, 334):
+        landmarks[index] = FakeLandmark(left_brow_x, 0.35)
+    for index in (70, 63, 46):
+        landmarks[index] = FakeLandmark(right_brow_x - 0.05, 0.35)
+    for index in (300, 293, 276):
+        landmarks[index] = FakeLandmark(left_brow_x + 0.05, 0.35)
+    landmarks[10] = FakeLandmark(0.2, 0.1)
+    landmarks[152] = FakeLandmark(0.8, 0.9)
+    return landmarks
 
 
 class ModelTests(unittest.TestCase):
@@ -49,10 +84,14 @@ class ModelTests(unittest.TestCase):
                 "motion_score": [0.1, 0.2, 0.3, 0.4],
                 "eye_symmetry": [0.05, 0.08, 0.11, 0.12],
                 "brow_energy": [0.1, 0.14, 0.18, 0.25],
+                "brow_position": [0.18, 0.24, 0.34, 0.42],
+                "brow_motion": [0.02, 0.06, 0.13, 0.24],
                 "mouth_opening": [0.1, 0.2, 0.4, 0.5],
+                "mouth_micro_motion": [0.02, 0.05, 0.16, 0.28],
                 "lower_face_motion": [0.05, 0.1, 0.22, 0.3],
                 "face_edge_density": [0.2, 0.22, 0.25, 0.31],
                 "nasal_tension": [0.12, 0.18, 0.24, 0.29],
+                "nose_contrast": [0.08, 0.16, 0.30, 0.36],
                 "respiratory_motion": [0.1, 0.15, 0.22, 0.3],
                 "wheeze_tonality": [0.05, 0.1, 0.3, 0.45],
                 "wheeze_band_energy": [0.08, 0.14, 0.35, 0.5],
@@ -148,12 +187,140 @@ class ModelTests(unittest.TestCase):
             0.28,
             1.0,
             0.20,
+            eye_symmetry=0.18,
+            brow_energy=0.42,
+            brow_position=0.36,
+            brow_motion=0.26,
             mouth_opening=0.34,
+            mouth_micro_motion=0.29,
             lower_face_motion=0.31,
+            face_edge_density=0.27,
             nasal_tension=0.22,
+            nose_contrast=0.24,
         )
         boost = _estimate_expression_pain_boost(features, 0.24, config)
         self.assertGreater(boost, 0.0)
+
+    def test_brow_edge_signal_and_boost_raise_pain_sensitivity(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.15,
+            0.48,
+            0.12,
+            0.8,
+            0.10,
+            eye_symmetry=0.22,
+            brow_energy=0.55,
+            brow_position=0.40,
+            brow_motion=0.32,
+            face_edge_density=0.44,
+            nasal_tension=0.20,
+            nose_contrast=0.31,
+        )
+        signal = _brow_edge_pain_signal(features)
+        boost = _estimate_brow_edge_boost(features, config)
+        self.assertGreater(signal, 0.0)
+        self.assertGreater(boost, 0.0)
+
+    def test_eyebrow_landmarks_classify_contracted_brows_as_pain(self):
+        config = PainMonitoringConfig()
+        landmarks = _fake_face_landmarks(0.49, 0.51)
+        distance, angle_score, contraction, confidence = eyebrow_contraction_from_landmarks(landmarks, (480, 640, 3), config)
+        self.assertLess(distance, config.eyebrow_distance_pain_threshold)
+        self.assertEqual(angle_score, 0.0)
+        self.assertGreaterEqual(contraction, 0.4)
+        self.assertGreaterEqual(confidence, 0.5)
+
+    def test_eyebrow_landmarks_classify_normal_brows_as_no_pain(self):
+        config = PainMonitoringConfig()
+        landmarks = _fake_face_landmarks(0.40, 0.60)
+        distance, angle_score, contraction, confidence = eyebrow_contraction_from_landmarks(landmarks, (480, 640, 3), config)
+        self.assertGreater(distance, config.eyebrow_distance_pain_threshold)
+        self.assertEqual(angle_score, 0.0)
+        self.assertEqual(contraction, 0.0)
+        self.assertEqual(confidence, 0.0)
+
+    def test_eyebrow_angle_raises_confidence_for_inner_brow_lowering(self):
+        config = PainMonitoringConfig()
+        landmarks = _fake_face_landmarks(0.49, 0.51)
+        for index in (107, 66, 105, 336, 296, 334):
+            landmarks[index].y = 0.42
+        distance, angle_score, contraction, confidence = eyebrow_contraction_from_landmarks(landmarks, (480, 640, 3), config)
+        self.assertLess(distance, config.eyebrow_distance_pain_threshold)
+        self.assertGreater(angle_score, 0.0)
+        self.assertGreater(confidence, contraction)
+
+    def test_eyebrow_confidence_needs_calibrated_distance_drop(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            eyebrow_distance_ratio=0.20,
+            eyebrow_contraction=0.75,
+            eyebrow_pain_confidence=0.85,
+        )
+        self.assertFalse(_is_confirmed_eyebrow_pain(features, config, baseline_eyebrow_distance_ratio=0.24))
+
+    def test_confirmed_eyebrow_drop_can_trigger_pain(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            eyebrow_distance_ratio=0.14,
+            eyebrow_contraction=0.85,
+            eyebrow_pain_confidence=0.90,
+        )
+        self.assertTrue(_is_confirmed_eyebrow_pain(features, config, baseline_eyebrow_distance_ratio=0.24))
+
+    def test_calm_brows_do_not_add_brow_edge_boost(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.10,
+            0.10,
+            0.10,
+            0.6,
+            0.05,
+            eye_symmetry=0.08,
+            brow_energy=0.12,
+            brow_position=0.18,
+            brow_motion=0.06,
+            face_edge_density=0.10,
+            nasal_tension=0.08,
+            nose_contrast=0.09,
+        )
+        boost = _estimate_brow_edge_boost(features, config)
+        self.assertEqual(boost, 0.0)
+
+    def test_mouth_and_nose_micro_features_raise_heuristic_score(self):
+        base = FramePainFeatures(True, (0, 0, 100, 100), 0.15, 0.18, 0.20, 0.8, 0.08)
+        attentive = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.15,
+            0.18,
+            0.20,
+            0.8,
+            0.08,
+            brow_motion=0.18,
+            mouth_micro_motion=0.30,
+            nose_contrast=0.34,
+        )
+        model = PainLinearModel()
+        self.assertGreater(model.predict_score(attentive), model.predict_score(base))
 
     def test_wheeze_probability_gets_support_from_audio_features(self):
         config = PainMonitoringConfig()
@@ -173,14 +340,156 @@ class ModelTests(unittest.TestCase):
         boosted = _support_wheeze_probability(features, 0.28, config)
         self.assertGreater(boosted, 0.28)
 
+    def test_sustained_pain_expression_adds_confidence_over_time(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.24,
+            0.46,
+            0.38,
+            1.0,
+            0.08,
+            brow_energy=0.50,
+            brow_position=0.44,
+            mouth_opening=0.32,
+            nasal_tension=0.24,
+            nose_contrast=0.34,
+        )
+        short_boost = _estimate_sustained_pain_boost(features, 0.5, config)
+        held_boost = _estimate_sustained_pain_boost(features, 8.0, config)
+        self.assertGreater(held_boost, short_boost)
+        self.assertGreater(held_boost, 0.0)
+
+    def test_neutral_face_guard_keeps_normal_face_below_pain_detection(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.12,
+            0.12,
+            0.10,
+            1.0,
+            0.03,
+            brow_energy=0.10,
+            brow_position=0.12,
+            brow_motion=0.02,
+            mouth_opening=0.08,
+            mouth_micro_motion=0.02,
+            lower_face_motion=0.03,
+            nasal_tension=0.08,
+            nose_contrast=0.08,
+        )
+        guarded = _apply_neutral_face_guard(3.6, features, 0.04, config)
+        self.assertTrue(_is_neutral_expression(features, 0.04, config))
+        self.assertLess(guarded, config.pain_start_threshold)
+
+    def test_calibrated_neutral_face_caps_trained_model_false_positive(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.18,
+            0.36,
+            0.22,
+            1.0,
+            0.04,
+            brow_energy=0.34,
+            brow_position=0.30,
+            brow_motion=0.03,
+            mouth_opening=0.12,
+            mouth_micro_motion=0.03,
+            lower_face_motion=0.04,
+            nasal_tension=0.16,
+            nose_contrast=0.16,
+        )
+        baseline = 0.34
+        guarded = _apply_neutral_face_guard(5.0, features, 0.05, config, baseline)
+        self.assertLess(_relative_facial_pain_evidence(features, baseline), config.neutral_relative_evidence_margin)
+        self.assertLess(guarded, config.pain_start_threshold)
+
+    def test_eyebrow_only_activity_is_not_enough_for_pain_detected(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.16,
+            0.55,
+            0.12,
+            1.0,
+            0.08,
+            brow_energy=0.52,
+            brow_position=0.44,
+            brow_motion=0.18,
+            mouth_opening=0.08,
+            mouth_micro_motion=0.03,
+            lower_face_motion=0.04,
+            nasal_tension=0.10,
+            nose_contrast=0.10,
+        )
+        guarded = _apply_neutral_face_guard(4.0, features, 0.09, config, baseline_facial_evidence=0.30)
+        self.assertLess(_pain_region_count(features, config, 0.30), config.minimum_pain_regions_required)
+        self.assertLess(guarded, config.pain_start_threshold)
+
+    def test_neutral_guard_does_not_hide_real_pain_expression(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.30,
+            0.46,
+            0.40,
+            1.0,
+            0.16,
+            brow_energy=0.50,
+            brow_position=0.45,
+            brow_motion=0.20,
+            mouth_opening=0.36,
+            mouth_micro_motion=0.22,
+            lower_face_motion=0.18,
+            nasal_tension=0.26,
+            nose_contrast=0.34,
+        )
+        guarded = _apply_neutral_face_guard(4.2, features, 0.18, config, baseline_facial_evidence=0.12)
+        self.assertFalse(_is_neutral_expression(features, 0.18, config, baseline_facial_evidence=0.12))
+        self.assertEqual(guarded, 4.2)
+
+    def test_evidence_seconds_increase_and_decay(self):
+        gained = _update_evidence_seconds(0.0, 0.6, 0.3, 1.0)
+        decayed = _update_evidence_seconds(gained, 0.1, 0.3, 0.5)
+        self.assertGreater(gained, 0.0)
+        self.assertLess(decayed, gained)
+
+    def test_sustained_wheeze_boost_increases_held_wheeze_probability(self):
+        config = PainMonitoringConfig()
+        features = FramePainFeatures(
+            True,
+            (0, 0, 100, 100),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            respiratory_motion=0.50,
+            wheeze_tonality=0.62,
+            wheeze_band_energy=0.66,
+            wheeze_entropy=0.45,
+        )
+        probability = 0.36
+        evidence = _wheeze_evidence(features, probability)
+        boost = _estimate_sustained_wheeze_boost(features, probability, 5.0, config)
+        self.assertGreater(evidence, config.sustained_wheeze_signal_threshold)
+        self.assertGreater(boost, 0.0)
+
     def test_email_notifications_require_sender_receiver_and_password(self):
         config = PainMonitoringConfig(
             email_notifications_enabled=True,
             notification_email_from="sender@gmail.com",
-            notification_email_to="receiver@gmail.com",
+            notification_email_to="receiver@gmail.com, second@gmail.com",
             notification_email_password="app-password",
         )
         self.assertTrue(email_notifications_ready(config))
+        self.assertEqual(resolve_recipient_list(config), ["receiver@gmail.com", "second@gmail.com"])
 
     def test_notification_body_contains_patient_and_scores(self):
         alert_body = build_alert_body(7, "pain", 5.2, 0.44, "Calibration ready")

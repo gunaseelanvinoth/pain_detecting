@@ -15,10 +15,18 @@ class FramePainFeatures:
     motion_score: float
     eye_symmetry: float = 0.0
     brow_energy: float = 0.0
+    brow_position: float = 0.0
+    brow_motion: float = 0.0
+    eyebrow_distance_ratio: float = 0.0
+    eyebrow_angle_score: float = 0.0
+    eyebrow_contraction: float = 0.0
+    eyebrow_pain_confidence: float = 0.0
     mouth_opening: float = 0.0
+    mouth_micro_motion: float = 0.0
     lower_face_motion: float = 0.0
     face_edge_density: float = 0.0
     nasal_tension: float = 0.0
+    nose_contrast: float = 0.0
     respiratory_motion: float = 0.0
     wheeze_tonality: float = 0.0
     wheeze_band_energy: float = 0.0
@@ -69,12 +77,21 @@ class RuntimeState:
     previous_gray: Optional[object] = None
     previous_face_box: Optional[tuple[int, int, int, int]] = None
     previous_timestamp: Optional[float] = None
+    previous_frame_timestamp: Optional[float] = None
     smoothed_score: float = 0.0
     smoothed_pain_score: float = 0.0
     smoothed_wheeze_probability: float = 0.0
     previous_raw_pain_score: float = 0.0
+    facial_pain_evidence_seconds: float = 0.0
+    wheeze_evidence_seconds: float = 0.0
     calibration_scores: list[float] = field(default_factory=list)
+    calibration_facial_evidence: list[float] = field(default_factory=list)
+    calibration_wheeze_evidence: list[float] = field(default_factory=list)
+    calibration_eyebrow_distance_ratios: list[float] = field(default_factory=list)
     baseline_score: Optional[float] = None
+    baseline_facial_evidence: Optional[float] = None
+    baseline_wheeze_evidence: Optional[float] = None
+    baseline_eyebrow_distance_ratio: Optional[float] = None
     time_above_start: float = 0.0
     time_below_end: float = 0.0
     active_episode: Optional[EpisodeState] = None
